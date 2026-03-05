@@ -36,3 +36,11 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Personal files
+USER.md
+SOUL.md
+HEARTBEAT.md
+MEMORY.md
+memory/*
+TOOLS.md
