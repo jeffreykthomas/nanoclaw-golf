@@ -67,3 +67,17 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Coach API (app-server entry point)
+export const APP_PORT = parseInt(process.env.APP_PORT || '3100', 10);
+export const COACH_FIRST_RESULT_TIMEOUT = parseInt(
+  process.env.COACH_FIRST_RESULT_TIMEOUT || '180000',
+  10,
+);
+export const CLAW_SIBLING_TOKEN =
+  process.env.CLAW_SIBLING_TOKEN ||
+  readEnvFile(['CLAW_SIBLING_TOKEN']).CLAW_SIBLING_TOKEN ||
+  '';
+export const ENABLE_COACH_AGENT =
+  (process.env.ENABLE_COACH_AGENT ||
+    readEnvFile(['ENABLE_COACH_AGENT']).ENABLE_COACH_AGENT) === 'true';

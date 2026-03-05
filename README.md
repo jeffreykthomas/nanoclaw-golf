@@ -94,6 +94,37 @@ Or run `/customize` for guided changes.
 
 The codebase is small enough that Claude can safely modify it.
 
+## Fork Notes (Personal Golf)
+
+This fork includes a golfer-first continuity layer so the assistant can stay consistent across sessions without mixing contexts.
+
+### Workspace continuity files
+
+- `AGENTS.md` - Operating rules for how the assistant behaves in this workspace
+- `SOUL.md` - Assistant identity and tone
+- `USER.md` - Who the assistant is helping (golfer profile)
+- `MEMORY.md` - Curated long-term memory for main/direct sessions only
+- `memory/YYYY-MM-DD.md` - Daily session notes
+- `HEARTBEAT.md` - Periodic check behavior
+- `TOOLS.md` - Practical coaching/tooling references (non-secret)
+
+### Memory precedence
+
+When both file memory and SDK memory are available, file memory is authoritative:
+1. `MEMORY.md` + `memory/YYYY-MM-DD.md`
+2. `USER.md` / `TOOLS.md`
+3. SDK memory (cache only)
+
+### Coach timeout setting
+
+Long-running coach tasks can exceed one minute. This fork adds:
+
+```bash
+COACH_FIRST_RESULT_TIMEOUT=180000
+```
+
+Set this in `.env` to control how long the coach API waits for the first streamed result.
+
 ## Contributing
 
 **Don't add features. Add skills.**

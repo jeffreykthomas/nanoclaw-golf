@@ -232,6 +232,13 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Forward user-configured service credentials so container skills
+  // (e.g. agent-browser automation) can use them in bash commands.
+  const forwardedEnvVars = readEnvFile(['ARCCOS_EMAIL', 'ARCCOS_PASSWORD']);
+  for (const [key, value] of Object.entries(forwardedEnvVars)) {
+    args.push('-e', `${key}=${value}`);
+  }
+
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).
