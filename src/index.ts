@@ -1,8 +1,13 @@
 import fs from 'fs';
+import type { Server as HttpServer } from 'http';
 import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH,
+  BIPBOT_INGRESS_CHAT_JID,
+  CLAW_SIBLING_TOKEN,
+  ENABLE_COACH_AGENT,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
@@ -18,6 +23,8 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
+import { startAutoCheckInLoop } from './checkin-engine.js';
+import { startCoachHttpServer } from './coach-http.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -27,28 +34,42 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getChatRouteInfo,
   getMessagesSince,
   getNewMessages,
   getRouterState,
   initDatabase,
   setRegisteredGroup,
+  setChatChannelOwner,
   setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { startBipbotIngressPoller } from './bipbot-ingress-poller.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  loadSenderCapabilityPolicy,
+  resolveSenderCapability,
+} from './sender-capability-policy.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { getSessionKey } from './session-key.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { sendTelegramMirrorMessage } from './telegram-notifier.js';
+import {
+  Channel,
+  NewMessage,
+  RegisteredGroup,
+  SenderCapabilityProfile,
+} from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -83,6 +104,75 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function getEffectiveSender(
+  chatJid: string,
+  messages: NewMessage[],
+  requiresTrigger: boolean,
+): NewMessage | undefined {
+  if (requiresTrigger) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (TRIGGER_PATTERN.test(message.content.trim())) {
+        return message;
+      }
+    }
+  }
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (!message.is_from_me && !message.is_bot_message) return message;
+  }
+
+  return messages[messages.length - 1];
+}
+
+function getSenderCapabilityContext(
+  chatJid: string,
+  messages: NewMessage[],
+  requiresTrigger: boolean,
+): {
+  capabilityProfile: SenderCapabilityProfile;
+  senderId: string;
+  senderName: string;
+} {
+  const cfg = loadSenderCapabilityPolicy();
+  const message = getEffectiveSender(chatJid, messages, requiresTrigger);
+  const senderId = message?.sender || '';
+  const senderName = message?.sender_name || 'Unknown';
+  return {
+    capabilityProfile: resolveSenderCapability(chatJid, senderId, cfg),
+    senderId,
+    senderName,
+  };
+}
+
+function buildAgentPrompt(
+  prompt: string,
+  context: {
+    capabilityProfile: SenderCapabilityProfile;
+    senderId: string;
+    senderName: string;
+  },
+): string {
+  const boundaryByProfile: Record<SenderCapabilityProfile, string> = {
+    'owner-full':
+      'You may use full coding, git, PR, browser, and high-impact workflows when the group instructions allow them.',
+    'operator-safe':
+      'You may help with business and content workflows, but do not do coding, git, PR, or code-edit workflows.',
+    'gateway-system':
+      'Treat this as a narrow machine-to-machine workflow. You may inspect the designated repository, assess issues, and hand off implementation through BipBot gateway jobs/comments, but do not push, open PRs, or do unrelated coding work directly.',
+    'chat-only':
+      'Keep this conversational only. Do not start operational, coding, or automation workflows.',
+  };
+
+  return [
+    `<sender-context profile="${context.capabilityProfile}" senderId="${context.senderId}" senderName="${context.senderName}">`,
+    boundaryByProfile[context.capabilityProfile],
+    `</sender-context>`,
+    prompt,
+  ].join('\n');
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -170,7 +260,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
+  const senderContext = getSenderCapabilityContext(
+    chatJid,
+    missedMessages,
+    !isMainGroup && group.requiresTrigger !== false,
+  );
+  const prompt = buildAgentPrompt(
+    formatMessages(missedMessages),
+    senderContext,
+  );
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -202,32 +300,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    senderContext,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -259,10 +366,19 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  senderContext: {
+    capabilityProfile: SenderCapabilityProfile;
+    senderId: string;
+    senderName: string;
+  },
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  const sessionKey = getSessionKey(
+    group.folder,
+    senderContext.capabilityProfile,
+  );
+  const sessionId = sessions[sessionKey];
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -293,8 +409,8 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          sessions[sessionKey] = output.newSessionId;
+          setSession(sessionKey, output.newSessionId);
         }
         await onOutput(output);
       }
@@ -309,16 +425,25 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        capabilityProfile: senderContext.capabilityProfile,
+        senderId: senderContext.senderId,
+        senderName: senderContext.senderName,
         assistantName: ASSISTANT_NAME,
       },
       (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+        queue.registerProcess(
+          chatJid,
+          proc,
+          containerName,
+          group.folder,
+          senderContext.capabilityProfile,
+        ),
       wrappedOnOutput,
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      sessions[sessionKey] = output.newSessionId;
+      setSession(sessionKey, output.newSessionId);
     }
 
     if (output.status === 'error') {
@@ -408,9 +533,23 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend);
+          const senderContext = getSenderCapabilityContext(
+            chatJid,
+            messagesToSend,
+            needsTrigger,
+          );
+          const formatted = buildAgentPrompt(
+            formatMessages(messagesToSend),
+            senderContext,
+          );
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          if (
+            queue.canReuseConversation(
+              chatJid,
+              senderContext.capabilityProfile,
+            ) &&
+            queue.sendMessage(chatJid, formatted)
+          ) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -425,6 +564,7 @@ async function startMessageLoop(): Promise<void> {
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
+            queue.closeStdin(chatJid);
             // No active container — enqueue for a new one
             queue.enqueueMessageCheck(chatJid);
           }
@@ -460,16 +600,70 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+function queueBipbotIngressMessage(event: {
+  issueId: string;
+  issueUrl: string;
+  prompt: string;
+  sourceType: string;
+}): void {
+  if (!BIPBOT_INGRESS_CHAT_JID) return;
+
+  const group = registeredGroups[BIPBOT_INGRESS_CHAT_JID];
+  if (!group) {
+    logger.warn(
+      { chatJid: BIPBOT_INGRESS_CHAT_JID },
+      'BipBot ingress chat is not registered; dropping ingress event',
+    );
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const prefix =
+    group.isMain === true || group.requiresTrigger === false
+      ? ''
+      : `@${ASSISTANT_NAME} `;
+  const content = [
+    `${prefix}[BipBot ingress]`,
+    `Issue: ${event.issueId}`,
+    event.issueUrl ? `URL: ${event.issueUrl}` : '',
+    event.sourceType ? `Source: ${event.sourceType}` : '',
+    '',
+    event.prompt,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  storeChatMetadata(BIPBOT_INGRESS_CHAT_JID, now, group.name, 'telegram', true);
+  storeMessage({
+    id: `bipbot-${event.issueId}-${Date.now()}`,
+    chat_jid: BIPBOT_INGRESS_CHAT_JID,
+    sender: 'gateway-system',
+    sender_name: 'BipBot Gateway',
+    content,
+    timestamp: now,
+    is_from_me: false,
+  });
+  queue.enqueueMessageCheck(BIPBOT_INGRESS_CHAT_JID);
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  let coachServer: HttpServer | null = null;
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
+    await new Promise<void>((resolve) => {
+      if (!coachServer) {
+        resolve();
+        return;
+      }
+      coachServer.close(() => resolve());
+    });
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -504,6 +698,17 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onChannelOwner: (chatJid: string, channelOwner: string) =>
+      setChatChannelOwner(chatJid, channelOwner),
+    getChatRoute: (chatJid: string) => {
+      const route = getChatRouteInfo(chatJid);
+      if (!route) return undefined;
+      return {
+        jid: route.jid,
+        channel: route.channel,
+        channelOwner: route.channel_owner,
+      };
+    },
     registeredGroups: () => registeredGroups,
   };
 
@@ -526,6 +731,25 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  if (ENABLE_COACH_AGENT) {
+    if (!CLAW_SIBLING_TOKEN) {
+      logger.warn(
+        'ENABLE_COACH_AGENT is true but CLAW_SIBLING_TOKEN is missing; embedded coach HTTP server disabled',
+      );
+    } else {
+      coachServer = await startCoachHttpServer({ continueOnPortInUse: true });
+      if (coachServer) {
+        startAutoCheckInLoop(sendTelegramMirrorMessage);
+      }
+    }
+  }
+
+  if (BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH && BIPBOT_INGRESS_CHAT_JID) {
+    await startBipbotIngressPoller(BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH, {
+      onIngressEvent: async (event) => queueBipbotIngressMessage(event),
+    });
   }
 
   // Start subsystems (independently of connection handler)

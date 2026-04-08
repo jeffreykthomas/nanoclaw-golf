@@ -25,6 +25,9 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
+  capabilityProfile?: 'owner-full' | 'operator-safe' | 'gateway-system' | 'chat-only';
+  senderId?: string;
+  senderName?: string;
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
@@ -188,8 +191,20 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
-// be visible to commands Kit runs.
+// be visible to commands Kit runs. Keep GITHUB_TOKEN available so
+// scoped repo workflows can clone/fetch/push private repos.
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+const GATEWAY_SYSTEM_BLOCKED_BASH_PATTERNS = [
+  /\bgit\s+push\b/i,
+  /\bgit\s+commit\b/i,
+  /\bgit\s+(merge|rebase|cherry-pick)\b/i,
+  /\bgit\s+remote\s+(add|remove|rename|set-url)\b/i,
+  /\bgit\s+config\b.*credential/i,
+  /\bgh\s+pr\b/i,
+  /\bgh\s+repo\b/i,
+  /\bgh\s+auth\b/i,
+];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -208,6 +223,121 @@ function createSanitizeBashHook(): HookCallback {
       },
     };
   };
+}
+
+function createGatewaySystemBashGuardHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const blocked = GATEWAY_SYSTEM_BLOCKED_BASH_PATTERNS.some((pattern) =>
+      pattern.test(command),
+    );
+    if (!blocked) return {};
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command:
+            "printf 'Blocked: gateway-system runs may inspect repos and queue gateway jobs, but may not push, commit, mutate remotes, or open PRs directly.\\n' >&2; exit 2",
+        },
+      },
+    };
+  };
+}
+
+function getAllowedTools(
+  capabilityProfile: NonNullable<ContainerInput['capabilityProfile']>,
+  useContextManagement: boolean,
+): string[] {
+  const sharedTools = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill'];
+  const messagingTools = ['mcp__nanoclaw__send_message'];
+  const planningTools = ['TodoWrite'];
+  const nanoclawTools = [
+    'mcp__nanoclaw__x_post',
+    'mcp__nanoclaw__x_like',
+    'mcp__nanoclaw__x_reply',
+    'mcp__nanoclaw__x_retweet',
+    'mcp__nanoclaw__x_quote',
+    'mcp__nanoclaw__list_tasks',
+    'mcp__nanoclaw__list_capabilities',
+  ];
+  const bipbotGatewayTools = [
+    'mcp__nanoclaw__bipbot_create_codex_job',
+    'mcp__nanoclaw__bipbot_enqueue_linear_comment',
+    'mcp__nanoclaw__bipbot_upsert_proposal',
+    'mcp__nanoclaw__bipbot_record_decision',
+  ];
+
+  let allowedTools: string[];
+  switch (capabilityProfile) {
+    case 'owner-full':
+      allowedTools = [
+        'Bash',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+        'TeamCreate',
+        'TeamDelete',
+        'SendMessage',
+        'TodoWrite',
+        'ToolSearch',
+        'Skill',
+        'NotebookEdit',
+        'mcp__nanoclaw__*',
+      ];
+      break;
+    case 'operator-safe':
+      allowedTools = [
+        ...sharedTools,
+        'Write',
+        'Edit',
+        ...planningTools,
+        ...messagingTools,
+        ...nanoclawTools,
+      ];
+      break;
+    case 'gateway-system':
+      allowedTools = [
+        'Bash',
+        'Read',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        ...messagingTools,
+        'TodoWrite',
+        'Skill',
+        'mcp__nanoclaw__list_tasks',
+        'mcp__nanoclaw__list_capabilities',
+        ...bipbotGatewayTools,
+      ];
+      break;
+    case 'chat-only':
+    default:
+      allowedTools = [
+        ...sharedTools,
+        ...messagingTools,
+        'mcp__nanoclaw__list_capabilities',
+      ];
+      break;
+  }
+
+  if (useContextManagement) {
+    allowedTools.push('Memory');
+  }
+
+  return allowedTools;
 }
 
 function sanitizeFilename(summary: string): string {
@@ -392,6 +522,7 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
   const useContextManagement = process.env.NANOCLAW_ENABLE_CONTEXT_MANAGEMENT !== '0';
+  const capabilityProfile = containerInput.capabilityProfile || 'owner-full';
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -416,20 +547,7 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  const allowedTools: string[] = [
-    'Bash',
-    'Read', 'Write', 'Edit', 'Glob', 'Grep',
-    'WebSearch', 'WebFetch',
-    'Task', 'TaskOutput', 'TaskStop',
-    'TeamCreate', 'TeamDelete', 'SendMessage',
-    'TodoWrite', 'ToolSearch', 'Skill',
-    'NotebookEdit',
-    'mcp__nanoclaw__*',
-  ];
-  if (useContextManagement) {
-    // Required for the context-management beta memory workflow.
-    allowedTools.push('Memory');
-  }
+  const allowedTools = getAllowedTools(capabilityProfile, useContextManagement);
 
   // SDK typings may lag new beta header strings; runtime still forwards them.
   const betas = useContextManagement ? [CONTEXT_MANAGEMENT_BETA] : undefined;
@@ -458,12 +576,26 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            NANOCLAW_CAPABILITY_PROFILE: capabilityProfile,
           },
         },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        PreToolUse:
+          capabilityProfile === 'owner-full'
+            ? [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }]
+            : capabilityProfile === 'gateway-system'
+              ? [
+                  {
+                    matcher: 'Bash',
+                    hooks: [
+                      createSanitizeBashHook(),
+                      createGatewaySystemBashGuardHook(),
+                    ],
+                  },
+                ]
+            : undefined,
       },
     }
   })) {

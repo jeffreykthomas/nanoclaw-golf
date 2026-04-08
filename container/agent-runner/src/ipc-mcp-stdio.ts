@@ -19,6 +19,13 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const capabilityProfile =
+  (process.env.NANOCLAW_CAPABILITY_PROFILE as
+    | 'owner-full'
+    | 'operator-safe'
+    | 'gateway-system'
+    | 'chat-only'
+    | undefined) || 'owner-full';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -38,6 +45,33 @@ const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
 });
+
+server.tool(
+  'list_capabilities',
+  'Show the current sender capability profile and the workflow boundaries that apply to this run.',
+  {},
+  async () => {
+    const summaryByProfile = {
+      'owner-full':
+        'owner-full: full coding, git, PR, browser, and high-impact workflows are allowed where the group permits them.',
+      'operator-safe':
+        'operator-safe: business/content workflows are allowed, but coding, git, PR, and codebase-edit workflows are not.',
+      'gateway-system':
+        'gateway-system: machine-driven workflow. You may inspect the designated repository and queue contract-backed gateway actions like codexJobs/comments, but do not push or open PRs directly.',
+      'chat-only':
+        'chat-only: conversational help only. Do not start operational, coding, or automation workflows.',
+    } as const;
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Capability profile: ${capabilityProfile}\n${summaryByProfile[capabilityProfile]}`,
+        },
+      ],
+    };
+  },
+);
 
 server.tool(
   'send_message',
@@ -60,6 +94,297 @@ server.tool(
 
     return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
   },
+);
+
+function canUseXTools(): boolean {
+  return capabilityProfile === 'owner-full' || capabilityProfile === 'operator-safe';
+}
+
+function canUseBipbotGatewayTools(): boolean {
+  return capabilityProfile === 'owner-full' || capabilityProfile === 'gateway-system';
+}
+
+async function waitForXResult(
+  requestId: string,
+  maxWait = 60000,
+): Promise<{ success: boolean; message: string }> {
+  const resultsDir = path.join(IPC_DIR, 'x_results');
+  const resultFile = path.join(resultsDir, `${requestId}.json`);
+  const pollInterval = 1000;
+  let elapsed = 0;
+
+  while (elapsed < maxWait) {
+    if (fs.existsSync(resultFile)) {
+      try {
+        const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+        fs.unlinkSync(resultFile);
+        return result;
+      } catch (err) {
+        return {
+          success: false,
+          message: `Failed to read X result: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    elapsed += pollInterval;
+  }
+
+  return { success: false, message: 'X request timed out' };
+}
+
+async function waitForBipbotGatewayResult(
+  requestId: string,
+  maxWait = 60000,
+): Promise<{ success: boolean; message: string }> {
+  const resultsDir = path.join(IPC_DIR, 'bipbot_results');
+  const resultFile = path.join(resultsDir, `${requestId}.json`);
+  const pollInterval = 1000;
+  let elapsed = 0;
+
+  while (elapsed < maxWait) {
+    if (fs.existsSync(resultFile)) {
+      try {
+        const result = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+        fs.unlinkSync(resultFile);
+        return result;
+      } catch (err) {
+        return {
+          success: false,
+          message: `Failed to read BipBot gateway result: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    elapsed += pollInterval;
+  }
+
+  return { success: false, message: 'BipBot gateway request timed out' };
+}
+
+function registerXTool(
+  name: 'x_post' | 'x_like' | 'x_reply' | 'x_retweet' | 'x_quote',
+  description: string,
+  schema: Record<string, z.ZodTypeAny>,
+  buildPayload: (args: Record<string, string>) => Record<string, unknown>,
+): void {
+  server.tool(name, description, schema, async (args) => {
+    if (!canUseXTools()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'X tools are not available for the current capability profile.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const requestId = `${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, {
+      type: name,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+      ...buildPayload(args as Record<string, string>),
+    });
+    const result = await waitForXResult(requestId);
+    return {
+      content: [{ type: 'text' as const, text: result.message }],
+      isError: !result.success,
+    };
+  });
+}
+
+registerXTool(
+  'x_post',
+  'Post to X (Twitter). Available to owner-full and operator-safe runs.',
+  {
+    content: z
+      .string()
+      .max(280)
+      .describe('The post content to publish (max 280 characters)'),
+  },
+  (args) => ({ content: args.content }),
+);
+
+registerXTool(
+  'x_like',
+  'Like a post on X (Twitter). Available to owner-full and operator-safe runs.',
+  {
+    tweet_url: z
+      .string()
+      .describe('The X status URL to like'),
+  },
+  (args) => ({ tweetUrl: args.tweet_url }),
+);
+
+registerXTool(
+  'x_reply',
+  'Reply to a post on X (Twitter). Available to owner-full and operator-safe runs.',
+  {
+    tweet_url: z
+      .string()
+      .describe('The X status URL to reply to'),
+    content: z
+      .string()
+      .max(280)
+      .describe('Reply content (max 280 characters)'),
+  },
+  (args) => ({ tweetUrl: args.tweet_url, content: args.content }),
+);
+
+registerXTool(
+  'x_retweet',
+  'Retweet a post on X (Twitter). Available to owner-full and operator-safe runs.',
+  {
+    tweet_url: z
+      .string()
+      .describe('The X status URL to retweet'),
+  },
+  (args) => ({ tweetUrl: args.tweet_url }),
+);
+
+registerXTool(
+  'x_quote',
+  'Quote-post a post on X (Twitter). Available to owner-full and operator-safe runs.',
+  {
+    tweet_url: z
+      .string()
+      .describe('The X status URL to quote'),
+    comment: z
+      .string()
+      .max(280)
+      .describe('The quote comment (max 280 characters)'),
+  },
+  (args) => ({ tweetUrl: args.tweet_url, comment: args.comment }),
+);
+
+function registerBipbotGatewayTool(
+  name:
+    | 'bipbot_create_codex_job'
+    | 'bipbot_enqueue_linear_comment'
+    | 'bipbot_upsert_proposal'
+    | 'bipbot_record_decision',
+  description: string,
+  schema: Record<string, z.ZodTypeAny>,
+  buildPayload: (args: Record<string, unknown>) => Record<string, unknown>,
+): void {
+  server.tool(name, description, schema, async (args) => {
+    if (!canUseBipbotGatewayTools()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'BipBot gateway tools are not available for the current capability profile.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const requestId = `${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeIpcFile(TASKS_DIR, {
+      type: name,
+      requestId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+      ...buildPayload(args as Record<string, unknown>),
+    });
+    const result = await waitForBipbotGatewayResult(requestId);
+    return {
+      content: [{ type: 'text' as const, text: result.message }],
+      isError: !result.success,
+    };
+  });
+}
+
+registerBipbotGatewayTool(
+  'bipbot_create_codex_job',
+  'Queue a code implementation job through the BipBot gateway. Use this instead of creating branches, pushes, or PRs directly.',
+  {
+    issue_id: z.string().describe('Linear issue ID or gateway issue ID'),
+    version: z.number().int().positive().describe('Proposal or decision version'),
+    repo_url: z.string().describe('Repository URL for the implementation job'),
+    branch: z.string().describe('Base branch the implementation job should target'),
+    prompt: z.string().describe('Implementation prompt for the downstream agent'),
+    agent: z.enum(['codex', 'claude']).describe('Which downstream coding agent should pick up the job'),
+    claude_model: z.string().optional().describe('Optional Claude model hint when agent=claude'),
+  },
+  (args) => ({
+    issueId: args.issue_id,
+    version: args.version,
+    repoUrl: args.repo_url,
+    branch: args.branch,
+    prompt: args.prompt,
+    agent: args.agent,
+    claudeModel: args.claude_model,
+  }),
+);
+
+registerBipbotGatewayTool(
+  'bipbot_enqueue_linear_comment',
+  'Queue a Linear comment through the BipBot gateway for audit trail or status updates.',
+  {
+    issue_id: z.string().describe('Linear issue ID'),
+    body: z.string().describe('Comment body to enqueue'),
+  },
+  (args) => ({
+    issueId: args.issue_id,
+    body: args.body,
+  }),
+);
+
+registerBipbotGatewayTool(
+  'bipbot_upsert_proposal',
+  'Store or update a proposal in the BipBot gateway without executing implementation directly.',
+  {
+    issue_id: z.string().describe('Linear issue ID'),
+    version: z.number().int().positive().describe('Proposal version'),
+    risk_assessment: z.string().describe('Overall risk assessment for the proposal'),
+    options: z.array(
+      z.object({
+        label: z.string(),
+        title: z.string(),
+        description: z.string(),
+        risk: z.string(),
+        implementation_prompt: z.string(),
+      }),
+    ).describe('Proposal options'),
+    conversation_history: z.array(
+      z.object({
+        role: z.string(),
+        content: z.string(),
+      }),
+    ).optional().describe('Optional condensed conversation history'),
+  },
+  (args) => ({
+    issueId: args.issue_id,
+    version: args.version,
+    riskAssessment: args.risk_assessment,
+    options: args.options,
+    conversationHistory: args.conversation_history,
+  }),
+);
+
+registerBipbotGatewayTool(
+  'bipbot_record_decision',
+  'Record an approval or expiration decision in the BipBot gateway.',
+  {
+    issue_id: z.string().describe('Linear issue ID'),
+    version: z.number().int().positive().describe('Proposal version'),
+    choice: z.string().describe('Chosen option label, such as A/B/C'),
+    rationale: z.string().describe('Why this decision was made'),
+    status: z.enum(['approved', 'expired']).describe('Decision status'),
+  },
+  (args) => ({
+    issueId: args.issue_id,
+    version: args.version,
+    choice: args.choice,
+    rationale: args.rationale,
+    status: args.status,
+  }),
 );
 
 server.tool(

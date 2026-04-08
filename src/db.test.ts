@@ -5,13 +5,20 @@ import {
   createTask,
   deleteTask,
   getAllChats,
+  getAllUserProfileIndexes,
   getAllRegisteredGroups,
+  getChatRouteInfo,
   getMessagesSince,
   getNewMessages,
   getTaskById,
+  getUserProfileIndex,
+  markUserCheckInSent,
+  markUserProfileReportGenerated,
+  setChatChannelOwner,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
+  upsertUserProfileIndex,
   updateTask,
 } from './db.js';
 
@@ -137,6 +144,77 @@ describe('storeMessage', () => {
     );
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toBe('updated');
+  });
+});
+
+describe('chat routing metadata', () => {
+  it('stores and reads channel owner metadata', () => {
+    storeChatMetadata(
+      'tg:123',
+      '2026-01-01T00:00:00.000Z',
+      'Mentors',
+      'telegram',
+      true,
+    );
+
+    setChatChannelOwner('tg:123', 'telegram:mentors_bot');
+
+    expect(getChatRouteInfo('tg:123')).toEqual({
+      jid: 'tg:123',
+      channel: 'telegram',
+      channel_owner: 'telegram:mentors_bot',
+    });
+  });
+});
+
+describe('user profile index', () => {
+  it('upserts and retrieves profile metadata', () => {
+    upsertUserProfileIndex({
+      user_id: '42',
+      coach_session_id: 7,
+      updated_at: '2026-03-26T10:00:00.000Z',
+      last_interaction_at: '2026-03-26T10:00:00.000Z',
+      evidence_count: 5,
+    });
+
+    const profile = getUserProfileIndex('42');
+    expect(profile).toBeDefined();
+    expect(profile?.coach_session_id).toBe(7);
+    expect(profile?.evidence_count).toBe(5);
+    expect(profile?.last_report_at).toBeNull();
+    expect(profile?.last_checkin_at).toBeNull();
+  });
+
+  it('tracks report generation separately from updates', () => {
+    upsertUserProfileIndex({
+      user_id: '42',
+      coach_session_id: 8,
+      updated_at: '2026-03-26T11:00:00.000Z',
+      last_interaction_at: '2026-03-26T11:00:00.000Z',
+      evidence_count: 9,
+    });
+
+    markUserProfileReportGenerated('42', '2026-03-26T12:00:00.000Z');
+
+    const profile = getUserProfileIndex('42');
+    expect(profile?.last_report_at).toBe('2026-03-26T12:00:00.000Z');
+    expect(profile?.evidence_count).toBe(9);
+  });
+
+  it('tracks last check-in time and lists profiles', () => {
+    upsertUserProfileIndex({
+      user_id: '42',
+      coach_session_id: 9,
+      updated_at: '2026-03-26T11:00:00.000Z',
+      last_interaction_at: '2026-03-26T11:00:00.000Z',
+      evidence_count: 9,
+    });
+
+    markUserCheckInSent('42', '2026-03-26T18:00:00.000Z');
+
+    const profile = getUserProfileIndex('42');
+    expect(profile?.last_checkin_at).toBe('2026-03-26T18:00:00.000Z');
+    expect(getAllUserProfileIndexes()).toHaveLength(1);
   });
 });
 

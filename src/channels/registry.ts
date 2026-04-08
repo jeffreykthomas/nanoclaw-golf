@@ -1,13 +1,17 @@
 import {
   Channel,
+  ChatRouteInfo,
   OnInboundMessage,
   OnChatMetadata,
+  OnChannelOwner,
   RegisteredGroup,
 } from '../types.js';
 
 export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
+  onChannelOwner: OnChannelOwner;
+  getChatRoute: (chatJid: string) => ChatRouteInfo | undefined;
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 

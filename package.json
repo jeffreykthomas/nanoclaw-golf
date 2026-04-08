@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsx scripts/sync-runtime-env.ts && tsc",
+    "sync:runtime-env": "tsx scripts/sync-runtime-env.ts",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "start:app": "node dist/app-server.js",
@@ -23,6 +24,8 @@
   "dependencies": {
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
+    "firebase-admin": "^13.7.0",
+    "grammy": "^1.39.3",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "yaml": "^2.8.2",

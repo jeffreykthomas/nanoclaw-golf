@@ -23,18 +23,18 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 
 ## Skills
 
+**Default coding guidance:** Cursor project rules (`.cursor/rules`) and local repo docs (`AGENTS.md`, `CLAUDE.md`, `TOOLS.md`, `docs/`) — not external rule feeds unless you are explicitly asked to use them.
+
 | Skill | When to Use |
 |-------|-------------|
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 | `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
-| `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
 ## Development
 
-Run commands directly—don't tell the user to run them.
+Run commands directly. Do the work instead of telling the human to do it.
 
 ```bash
 npm run dev          # Run with hot reload

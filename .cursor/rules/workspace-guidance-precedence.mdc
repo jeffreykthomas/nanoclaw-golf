@@ -1,0 +1,11 @@
+---
+description: Prefer Cursor project rules and repo docs over external rule systems.
+alwaysApply: true
+---
+
+# Workspace guidance precedence
+
+1. **`.cursor/rules`** — follow these first.
+2. **`AGENTS.md`**, **`CLAUDE.md`**, **`TOOLS.md`**, and other documentation in this repo.
+
+Use external rule systems **only when the user explicitly requests** them. Do not auto-fetch or treat them as the default for normal Cursor work.

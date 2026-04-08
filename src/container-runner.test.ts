@@ -27,6 +27,20 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+// Mock env reader
+vi.mock('./env.js', () => ({
+  readEnvFile: vi.fn((keys: string[]) => {
+    const values: Record<string, string> = {
+      GITHUB_TOKEN: 'gh-test-token',
+    };
+    return Object.fromEntries(
+      keys
+        .filter((key) => values[key] !== undefined)
+        .map((key) => [key, values[key]]),
+    );
+  }),
+}));
+
 // Mock fs
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -205,5 +219,38 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('passes GITHUB_TOKEN to the container input secrets', async () => {
+    let stdinData = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      stdinData += chunk.toString();
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const parsedInput = JSON.parse(stdinData);
+    expect(parsedInput.secrets).toMatchObject({
+      GITHUB_TOKEN: 'gh-test-token',
+    });
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Bootstrapped',
+      newSessionId: 'session-gh',
+    });
+    fakeProc.emit('close', 0);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'success',
+      newSessionId: 'session-gh',
+    });
   });
 });

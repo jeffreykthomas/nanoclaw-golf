@@ -10,6 +10,7 @@ import {
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
+  UserProfileIndex,
 } from './types.js';
 
 let db: Database.Database;
@@ -21,6 +22,7 @@ function createSchema(database: Database.Database): void {
       name TEXT,
       last_message_time TEXT,
       channel TEXT,
+      channel_owner TEXT,
       is_group INTEGER DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS messages (
@@ -82,6 +84,23 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS user_profile_index (
+      user_id TEXT PRIMARY KEY,
+      coach_session_id INTEGER,
+      updated_at TEXT NOT NULL,
+      last_report_at TEXT,
+      last_interaction_at TEXT,
+      last_checkin_at TEXT,
+      evidence_count INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS checkin_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      delivered_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_checkin_user_delivered ON checkin_messages(user_id, delivered_at);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -122,6 +141,7 @@ function createSchema(database: Database.Database): void {
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
+    database.exec(`ALTER TABLE chats ADD COLUMN channel_owner TEXT`);
     database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
     // Backfill from JID patterns
     database.exec(
@@ -138,6 +158,20 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* columns already exist */
+  }
+
+  try {
+    database.exec(`ALTER TABLE chats ADD COLUMN channel_owner TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE user_profile_index ADD COLUMN last_checkin_at TEXT`,
+    );
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -217,6 +251,7 @@ export interface ChatInfo {
   name: string;
   last_message_time: string;
   channel: string;
+  channel_owner: string | null;
   is_group: number;
 }
 
@@ -227,12 +262,43 @@ export function getAllChats(): ChatInfo[] {
   return db
     .prepare(
       `
-    SELECT jid, name, last_message_time, channel, is_group
+    SELECT jid, name, last_message_time, channel, channel_owner, is_group
     FROM chats
     ORDER BY last_message_time DESC
   `,
     )
     .all() as ChatInfo[];
+}
+
+export function setChatChannelOwner(
+  chatJid: string,
+  channelOwner: string,
+): void {
+  db.prepare(
+    `
+    INSERT INTO chats (jid, name, last_message_time, channel_owner)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(jid) DO UPDATE SET channel_owner = excluded.channel_owner
+  `,
+  ).run(chatJid, chatJid, new Date().toISOString(), channelOwner);
+}
+
+export function getChatRouteInfo(chatJid: string):
+  | {
+      jid: string;
+      channel: string | null;
+      channel_owner: string | null;
+    }
+  | undefined {
+  return db
+    .prepare('SELECT jid, channel, channel_owner FROM chats WHERE jid = ?')
+    .get(chatJid) as
+    | {
+        jid: string;
+        channel: string | null;
+        channel_owner: string | null;
+      }
+    | undefined;
 }
 
 /**
@@ -525,6 +591,128 @@ export function getAllSessions(): Record<string, string> {
     result[row.group_folder] = row.session_id;
   }
   return result;
+}
+
+// --- User profile index accessors ---
+
+export function getUserProfileIndex(
+  userId: string,
+): UserProfileIndex | undefined {
+  return db
+    .prepare(
+      `SELECT user_id, coach_session_id, updated_at, last_report_at, last_interaction_at, last_checkin_at, evidence_count
+       FROM user_profile_index WHERE user_id = ?`,
+    )
+    .get(userId) as UserProfileIndex | undefined;
+}
+
+export function getAllUserProfileIndexes(): UserProfileIndex[] {
+  return db
+    .prepare(
+      `SELECT user_id, coach_session_id, updated_at, last_report_at, last_interaction_at, last_checkin_at, evidence_count
+       FROM user_profile_index
+       ORDER BY updated_at DESC`,
+    )
+    .all() as UserProfileIndex[];
+}
+
+export function upsertUserProfileIndex(input: {
+  user_id: string;
+  coach_session_id: number | null;
+  updated_at: string;
+  last_interaction_at: string | null;
+  last_checkin_at?: string | null;
+  evidence_count: number;
+}): void {
+  db.prepare(
+    `
+    INSERT INTO user_profile_index (user_id, coach_session_id, updated_at, last_report_at, last_interaction_at, last_checkin_at, evidence_count)
+    VALUES (?, ?, ?, COALESCE((SELECT last_report_at FROM user_profile_index WHERE user_id = ?), NULL), ?, COALESCE(?, (SELECT last_checkin_at FROM user_profile_index WHERE user_id = ?), NULL), ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      coach_session_id = excluded.coach_session_id,
+      updated_at = excluded.updated_at,
+      last_interaction_at = excluded.last_interaction_at,
+      last_checkin_at = COALESCE(excluded.last_checkin_at, user_profile_index.last_checkin_at),
+      evidence_count = excluded.evidence_count
+  `,
+  ).run(
+    input.user_id,
+    input.coach_session_id,
+    input.updated_at,
+    input.user_id,
+    input.last_interaction_at,
+    input.last_checkin_at ?? null,
+    input.user_id,
+    input.evidence_count,
+  );
+}
+
+export function markUserProfileReportGenerated(
+  userId: string,
+  at = new Date().toISOString(),
+): void {
+  db.prepare(
+    `
+    INSERT INTO user_profile_index (user_id, updated_at, last_report_at, evidence_count)
+    VALUES (?, ?, ?, 0)
+    ON CONFLICT(user_id) DO UPDATE SET
+      last_report_at = excluded.last_report_at
+  `,
+  ).run(userId, at, at);
+}
+
+export function markUserCheckInSent(
+  userId: string,
+  at = new Date().toISOString(),
+): void {
+  db.prepare(
+    `
+    INSERT INTO user_profile_index (user_id, updated_at, last_checkin_at, evidence_count)
+    VALUES (?, ?, ?, 0)
+    ON CONFLICT(user_id) DO UPDATE SET
+      last_checkin_at = excluded.last_checkin_at,
+      updated_at = excluded.updated_at
+  `,
+  ).run(userId, at, at);
+}
+
+// --- Check-in message accessors ---
+
+export interface CheckInMessage {
+  id: number;
+  user_id: string;
+  message: string;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+export function storeCheckInMessage(userId: string, message: string): number {
+  const result = db
+    .prepare(
+      `INSERT INTO checkin_messages (user_id, message, created_at) VALUES (?, ?, ?)`,
+    )
+    .run(userId, message, new Date().toISOString());
+  return result.lastInsertRowid as number;
+}
+
+export function getPendingCheckInMessages(userId: string): CheckInMessage[] {
+  return db
+    .prepare(
+      `SELECT id, user_id, message, created_at, delivered_at
+       FROM checkin_messages
+       WHERE user_id = ? AND delivered_at IS NULL
+       ORDER BY created_at`,
+    )
+    .all(userId) as CheckInMessage[];
+}
+
+export function markCheckInMessagesDelivered(ids: number[]): void {
+  if (ids.length === 0) return;
+  const now = new Date().toISOString();
+  const placeholders = ids.map(() => '?').join(',');
+  db.prepare(
+    `UPDATE checkin_messages SET delivered_at = ? WHERE id IN (${placeholders})`,
+  ).run(now, ...ids);
 }
 
 // --- Registered group accessors ---

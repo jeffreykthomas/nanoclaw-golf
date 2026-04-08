@@ -42,6 +42,18 @@ export interface RegisteredGroup {
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }
 
+export type SenderCapabilityProfile =
+  | 'owner-full'
+  | 'operator-safe'
+  | 'gateway-system'
+  | 'chat-only';
+
+export interface ChatRouteInfo {
+  jid: string;
+  channel: string | null;
+  channelOwner: string | null;
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -77,6 +89,16 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+export interface UserProfileIndex {
+  user_id: string;
+  coach_session_id: number | null;
+  updated_at: string;
+  last_report_at: string | null;
+  last_interaction_at: string | null;
+  last_checkin_at: string | null;
+  evidence_count: number;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {
@@ -105,3 +127,5 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+export type OnChannelOwner = (chatJid: string, channelOwner: string) => void;

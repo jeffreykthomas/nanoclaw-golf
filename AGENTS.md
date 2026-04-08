@@ -38,6 +38,15 @@ When multiple memory systems exist, use this order:
 
 If there is any conflict, file-based memory wins and should be updated explicitly.
 
+## Rule precedence (Cursor and repo)
+
+When coding or following workspace instructions, use this order:
+
+1. **`.cursor/rules`** (project rules loaded by Cursor)
+2. **`AGENTS.md`**, **`CLAUDE.md`**, **`TOOLS.md`**, and other repo docs
+
+Use external rule systems **only when explicitly asked**. For normal Cursor work, do not auto-fetch or prefer them over the above.
+
 ## MEMORY.md Rules (Security-Critical)
 
 Load `MEMORY.md` **only in main session**.

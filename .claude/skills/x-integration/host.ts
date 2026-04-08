@@ -78,7 +78,7 @@ function writeResult(dataDir: string, sourceGroup: string, requestId: string, re
 export async function handleXIpc(
   data: Record<string, unknown>,
   sourceGroup: string,
-  isMain: boolean,
+  _isMain: boolean,
   dataDir: string
 ): Promise<boolean> {
   const type = data.type as string;
@@ -86,12 +86,6 @@ export async function handleXIpc(
   // Only handle x_* types
   if (!type?.startsWith('x_')) {
     return false;
-  }
-
-  // Only main group can use X integration
-  if (!isMain) {
-    logger.warn({ sourceGroup, type }, 'X integration blocked: not main group');
-    return true;
   }
 
   const requestId = data.requestId as string;

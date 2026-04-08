@@ -19,6 +19,7 @@ interface GroupState {
   idleWaiting: boolean;
   isTaskContainer: boolean;
   runningTaskId: string | null;
+  capabilityProfile: string | null;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -43,6 +44,7 @@ export class GroupQueue {
         idleWaiting: false,
         isTaskContainer: false,
         runningTaskId: null,
+        capabilityProfile: null,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -134,11 +136,13 @@ export class GroupQueue {
     proc: ChildProcess,
     containerName: string,
     groupFolder?: string,
+    capabilityProfile?: string,
   ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+    if (capabilityProfile) state.capabilityProfile = capabilityProfile;
   }
 
   /**
@@ -175,6 +179,15 @@ export class GroupQueue {
     } catch {
       return false;
     }
+  }
+
+  canReuseConversation(groupJid: string, capabilityProfile: string): boolean {
+    const state = this.getGroup(groupJid);
+    return (
+      state.active &&
+      !state.isTaskContainer &&
+      state.capabilityProfile === capabilityProfile
+    );
   }
 
   /**
@@ -226,6 +239,7 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.capabilityProfile = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -255,6 +269,7 @@ export class GroupQueue {
       state.process = null;
       state.containerName = null;
       state.groupFolder = null;
+      state.capabilityProfile = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
