@@ -23,6 +23,7 @@ import {
   getProfileCommandResponse,
   queueUserProfileUpdate,
 } from './profile/service.js';
+import { handleLearningRequest } from './learning-http.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { escapeXml, formatOutbound } from './router.js';
@@ -471,6 +472,11 @@ export async function startCoachHttpServer(options?: {
 
     if (req.method === 'POST' && req.url === '/v1/coach/insights') {
       await handleCoachInsightRequest(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/v1/learning/respond') {
+      await handleLearningRequest(req, res);
       return;
     }
 

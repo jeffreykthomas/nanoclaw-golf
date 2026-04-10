@@ -29,7 +29,7 @@ import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup, SenderCapabilityProfile } from './types.js';
 
-const onecli = new OneCLI({ url: ONECLI_URL });
+const onecli = ONECLI_URL ? new OneCLI({ url: ONECLI_URL }) : null;
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -85,7 +85,7 @@ function buildVolumeMounts(
     });
 
     // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the OneCLI gateway, never exposed to containers.
+    // Credentials are injected via host-managed secret flow instead.
     const envFile = path.join(projectRoot, '.env');
     if (fs.existsSync(envFile)) {
       mounts.push({
@@ -278,30 +278,48 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Forward user-configured service credentials so container skills
-  // (e.g. agent-browser automation) can use them in bash commands.
-  const forwardedEnvVars = readEnvFile(['ARCCOS_EMAIL', 'ARCCOS_PASSWORD']);
+  // Forward selected integration credentials so container skills and
+  // bash workflows can use explicitly allowed services.
+  const forwardedEnvVars = readEnvFile([
+    'ARCCOS_EMAIL',
+    'ARCCOS_PASSWORD',
+    'GITHUB_TOKEN',
+    'GOOGLE_SERVICE_ACCOUNT_JSON',
+    'GOOGLE_IMPERSONATE_EMAIL',
+    'GOOGLE_DRIVE_WRITE_FOLDER_ID',
+    'GMAIL_SEND_AS',
+    'YOUTUBE_TOKEN_JSON',
+    'YOUTUBE_CREDENTIALS_JSON',
+    'GOOGLE_ADS_DEVELOPER_TOKEN',
+    'GOOGLE_ADS_CUSTOMER_ID',
+    'GOOGLE_ADS_LOGIN_CUSTOMER_ID',
+    'GA4_PROPERTY_ID',
+    'ELEVENLABS_API_KEY',
+    'META_ADS_CREDENTIALS',
+  ]);
   for (const [key, value] of Object.entries(forwardedEnvVars)) {
     args.push('-e', `${key}=${value}`);
   }
 
-  // OneCLI gateway handles credential injection — containers never see real secrets.
-  // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
-  const onecliApplied = await onecli.applyContainerConfig(args, {
-    addHostMapping: false, // Nanoclaw already handles host gateway
-    agent: agentIdentifier,
-  });
-  if (onecliApplied) {
-    logger.info({ containerName }, 'OneCLI gateway config applied');
-  } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
-  }
+  if (onecli) {
+    // OneCLI gateway handles credential injection when configured.
+    // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
+    const onecliApplied = await onecli.applyContainerConfig(args, {
+      addHostMapping: false, // Nanoclaw already handles host gateway
+      agent: agentIdentifier,
+    });
+    if (onecliApplied) {
+      logger.info({ containerName }, 'OneCLI gateway config applied');
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI gateway not reachable — container will have no credentials',
+      );
+    }
 
-  // Runtime-specific args for host gateway resolution
-  args.push(...hostGatewayArgs());
+    // Runtime-specific args for host gateway resolution
+    args.push(...hostGatewayArgs());
+  }
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).

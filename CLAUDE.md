@@ -60,6 +60,15 @@ npm run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
 ```
 
+Local path note:
+- `Documents/personal-golf/nanoclaw-golf` resolves to `/Users/jeffreythomas/nanoclaw-golf` (symlinked workspace path)
+- When restarting the live app, use the real repo path so you rebuild/restart the process that launchd actually runs
+- Live rebuild + restart command:
+
+```bash
+cd /Users/jeffreythomas/nanoclaw-golf && npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main
+```
+
 Service management:
 ```bash
 # macOS (launchd)
