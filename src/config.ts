@@ -7,6 +7,38 @@ import { isValidTimezone } from './timezone.js';
 
 // Read config values from .env (falls back to process.env).
 const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER', 'ONECLI_URL', 'ONECLI_API_KEY', 'TZ']);
+const coachEnvConfig = readEnvFile([
+  'APP_PORT',
+  'AUTO_ARCCOS_SYNC_ENABLED',
+  'AUTO_CHECKINS_ENABLED',
+  'AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED',
+  'ARCCOS_SYNC_ALLOWED_HOURS',
+  'ARCCOS_SYNC_ALLOWED_WEEKDAYS',
+  'ARCCOS_SYNC_BATCH_LIMIT',
+  'ARCCOS_SYNC_CUTOFF_MONTHS',
+  'ARCCOS_SYNC_LOOP_INTERVAL_MS',
+  'ARCCOS_SYNC_MAX_ROUNDS',
+  'ARCCOS_SYNC_TIMEOUT_MS',
+  'BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH',
+  'BIPBOT_GATEWAY_TOKEN',
+  'BIPBOT_GATEWAY_URL',
+  'BIPBOT_INGRESS_AGENT_FOLDER',
+  'BIPBOT_INGRESS_AGENT_NAME',
+  'BIPBOT_INGRESS_POLL_INTERVAL',
+  'CHECKIN_ALLOWED_HOURS',
+  'CHECKIN_LOOP_INTERVAL_MS',
+  'CHECKIN_MIN_HOURS_SINCE_CHAT',
+  'CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN',
+  'CLAW_SIBLING_TOKEN',
+  'COACH_APP_URL',
+  'COACH_FIRST_RESULT_TIMEOUT',
+  'ENABLE_COACH_AGENT',
+  'SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS',
+  'SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT',
+  'SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_MIRROR_CHAT_ID',
+]);
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
@@ -66,3 +98,112 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+// Internal coach/app bridge.
+export const APP_PORT = parseInt(process.env.APP_PORT || coachEnvConfig.APP_PORT || '3100', 10);
+export const CLAW_SIBLING_TOKEN = process.env.CLAW_SIBLING_TOKEN || coachEnvConfig.CLAW_SIBLING_TOKEN || '';
+export const COACH_APP_URL = process.env.COACH_APP_URL || coachEnvConfig.COACH_APP_URL || 'http://127.0.0.1:3000';
+export const COACH_FIRST_RESULT_TIMEOUT = parseInt(
+  process.env.COACH_FIRST_RESULT_TIMEOUT || coachEnvConfig.COACH_FIRST_RESULT_TIMEOUT || '180000',
+  10,
+);
+export const ENABLE_COACH_AGENT =
+  (process.env.ENABLE_COACH_AGENT || coachEnvConfig.ENABLE_COACH_AGENT || 'false') === 'true';
+
+export const AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED =
+  (process.env.AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED ||
+    coachEnvConfig.AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED ||
+    'false') === 'true';
+export const SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS = parseInt(
+  process.env.SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS ||
+    coachEnvConfig.SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS ||
+    '3600000',
+  10,
+);
+export const SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT = parseInt(
+  process.env.SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT || coachEnvConfig.SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT || '5',
+  10,
+);
+export const SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS = (
+  process.env.SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS ||
+  coachEnvConfig.SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS ||
+  '2'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+
+export const AUTO_ARCCOS_SYNC_ENABLED =
+  (process.env.AUTO_ARCCOS_SYNC_ENABLED || coachEnvConfig.AUTO_ARCCOS_SYNC_ENABLED || 'false') === 'true';
+export const ARCCOS_SYNC_LOOP_INTERVAL_MS = parseInt(
+  process.env.ARCCOS_SYNC_LOOP_INTERVAL_MS || coachEnvConfig.ARCCOS_SYNC_LOOP_INTERVAL_MS || '3600000',
+  10,
+);
+export const ARCCOS_SYNC_BATCH_LIMIT = parseInt(
+  process.env.ARCCOS_SYNC_BATCH_LIMIT || coachEnvConfig.ARCCOS_SYNC_BATCH_LIMIT || '3',
+  10,
+);
+export const ARCCOS_SYNC_ALLOWED_HOURS = (
+  process.env.ARCCOS_SYNC_ALLOWED_HOURS || coachEnvConfig.ARCCOS_SYNC_ALLOWED_HOURS || '3'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+export const ARCCOS_SYNC_ALLOWED_WEEKDAYS = (
+  process.env.ARCCOS_SYNC_ALLOWED_WEEKDAYS || coachEnvConfig.ARCCOS_SYNC_ALLOWED_WEEKDAYS || '1'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6);
+export const ARCCOS_SYNC_CUTOFF_MONTHS = parseInt(
+  process.env.ARCCOS_SYNC_CUTOFF_MONTHS || coachEnvConfig.ARCCOS_SYNC_CUTOFF_MONTHS || '6',
+  10,
+);
+export const ARCCOS_SYNC_MAX_ROUNDS = parseInt(
+  process.env.ARCCOS_SYNC_MAX_ROUNDS || coachEnvConfig.ARCCOS_SYNC_MAX_ROUNDS || '150',
+  10,
+);
+export const ARCCOS_SYNC_TIMEOUT_MS = parseInt(
+  process.env.ARCCOS_SYNC_TIMEOUT_MS || coachEnvConfig.ARCCOS_SYNC_TIMEOUT_MS || '900000',
+  10,
+);
+
+export const BIPBOT_GATEWAY_URL = process.env.BIPBOT_GATEWAY_URL || coachEnvConfig.BIPBOT_GATEWAY_URL || '';
+export const BIPBOT_GATEWAY_TOKEN = process.env.BIPBOT_GATEWAY_TOKEN || coachEnvConfig.BIPBOT_GATEWAY_TOKEN || '';
+export const BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH =
+  process.env.BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH || coachEnvConfig.BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH || '';
+export const BIPBOT_INGRESS_POLL_INTERVAL = parseInt(
+  process.env.BIPBOT_INGRESS_POLL_INTERVAL || coachEnvConfig.BIPBOT_INGRESS_POLL_INTERVAL || '10000',
+  10,
+);
+export const BIPBOT_INGRESS_AGENT_FOLDER =
+  process.env.BIPBOT_INGRESS_AGENT_FOLDER || coachEnvConfig.BIPBOT_INGRESS_AGENT_FOLDER || 'bipbot';
+export const BIPBOT_INGRESS_AGENT_NAME =
+  process.env.BIPBOT_INGRESS_AGENT_NAME || coachEnvConfig.BIPBOT_INGRESS_AGENT_NAME || 'BipBot';
+
+export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || coachEnvConfig.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_MIRROR_CHAT_ID =
+  process.env.TELEGRAM_MIRROR_CHAT_ID || coachEnvConfig.TELEGRAM_MIRROR_CHAT_ID || '';
+
+export const AUTO_CHECKINS_ENABLED =
+  (process.env.AUTO_CHECKINS_ENABLED || coachEnvConfig.AUTO_CHECKINS_ENABLED || 'false') === 'true';
+export const CHECKIN_LOOP_INTERVAL_MS = parseInt(
+  process.env.CHECKIN_LOOP_INTERVAL_MS || coachEnvConfig.CHECKIN_LOOP_INTERVAL_MS || '3600000',
+  10,
+);
+export const CHECKIN_MIN_HOURS_SINCE_CHAT = parseInt(
+  process.env.CHECKIN_MIN_HOURS_SINCE_CHAT || coachEnvConfig.CHECKIN_MIN_HOURS_SINCE_CHAT || '20',
+  10,
+);
+export const CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN = parseInt(
+  process.env.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN ||
+    coachEnvConfig.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN ||
+    '24',
+  10,
+);
+export const CHECKIN_ALLOWED_HOURS = (
+  process.env.CHECKIN_ALLOWED_HOURS || coachEnvConfig.CHECKIN_ALLOWED_HOURS || '9'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);

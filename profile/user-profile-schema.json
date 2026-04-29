@@ -1,0 +1,392 @@
+{
+  "schema_name": "nanoclaw_user_coaching_profile",
+  "schema_version": "0.1.0",
+  "top_level_categories": [
+    {
+      "key": "identity_self_concept",
+      "label": "Identity & Self-Concept",
+      "fields": [
+        { "key": "core_roles", "type": "list_string" },
+        { "key": "self_story", "type": "string_optional" },
+        { "key": "identity_anchors", "type": "list_string" },
+        { "key": "status_orientation", "type": "enum", "options": ["status_seeking", "status_avoiding", "status_indifferent", "status_ambivalent"] },
+        { "key": "self_esteem_profile", "type": "enum", "options": ["stable", "fragile", "defensive", "low", "oscillating"] },
+        { "key": "pride_points", "type": "list_string" },
+        { "key": "shame_points", "type": "list_string" },
+        { "key": "identity_contradictions", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "demographics_social_position",
+      "label": "Demographics & Social Position",
+      "fields": [
+        { "key": "age", "type": "number_optional" },
+        { "key": "gender_identity", "type": "string_optional" },
+        { "key": "pronouns", "type": "string_optional" },
+        { "key": "location", "type": "string_optional" },
+        { "key": "language_register", "type": "enum", "options": ["formal", "neutral", "casual", "mixed"] },
+        { "key": "socioeconomic_background", "type": "enum", "options": ["low", "working", "middle", "upper", "varied"] },
+        { "key": "education_exposure", "type": "string_optional" },
+        { "key": "public_identity_visibility", "type": "enum", "options": ["high", "medium", "low"] }
+      ]
+    },
+    {
+      "key": "culture_religion_worldview",
+      "label": "Culture, Religion & Worldview",
+      "fields": [
+        { "key": "cultural_context", "type": "list_string" },
+        { "key": "religious_spiritual_orientation", "type": "string_optional" },
+        { "key": "sacred_things", "type": "list_string" },
+        { "key": "purity_disgust_sensitivities", "type": "list_string" },
+        { "key": "fate_vs_agency", "type": "scale_0_10" },
+        { "key": "tradition_vs_progress", "type": "scale_0_10" },
+        { "key": "ingroup_outgroup_model", "type": "string_optional" },
+        { "key": "cosmic_justice_belief", "type": "scale_0_10" }
+      ]
+    },
+    {
+      "key": "life_history_formative_events",
+      "label": "Life History & Formative Events",
+      "fields": [
+        { "key": "origin_summary", "type": "string_optional" },
+        { "key": "formative_events", "type": "list_object", "schema": { "event": "string", "age_or_period": "string_optional", "impact": "string_optional" } },
+        { "key": "wins_and_achievements", "type": "list_string" },
+        { "key": "losses_and_grief", "type": "list_string" },
+        { "key": "turning_points", "type": "list_string" },
+        { "key": "attachments_history_notes", "type": "string_optional" },
+        { "key": "institutions_experience", "type": "list_string" },
+        { "key": "recurring_pattern", "type": "string_optional" }
+      ]
+    },
+    {
+      "key": "motivations_needs_drives",
+      "label": "Motivations, Needs & Drives",
+      "fields": [
+        { "key": "core_needs", "type": "object", "schema": { "safety": "scale_0_10", "belonging": "scale_0_10", "autonomy": "scale_0_10", "competence": "scale_0_10", "meaning": "scale_0_10", "novelty": "scale_0_10" } },
+        { "key": "approach_avoid_balance", "type": "scale_0_10" },
+        { "key": "primary_goals_long_horizon", "type": "list_string" },
+        { "key": "short_term_incentives", "type": "list_string" },
+        { "key": "jealousy_envy_triggers", "type": "list_string" },
+        { "key": "validation_hunger_topics", "type": "list_string" },
+        { "key": "what_feels_like_threat", "type": "list_string" },
+        { "key": "what_feels_like_home", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "values_beliefs_ethics",
+      "label": "Values, Beliefs & Ethics",
+      "fields": [
+        { "key": "core_values", "type": "list_string" },
+        { "key": "non_negotiables", "type": "list_string" },
+        { "key": "moral_style", "type": "object", "schema": { "care": "scale_0_10", "fairness": "scale_0_10", "loyalty": "scale_0_10", "authority": "scale_0_10", "liberty": "scale_0_10" } },
+        { "key": "epistemic_style", "type": "enum", "options": ["scientific", "pragmatic", "traditional", "intuitive", "authority_based", "contrarian"] },
+        { "key": "political_orientation_notes", "type": "string_optional" },
+        { "key": "taboos", "type": "list_string" },
+        { "key": "ethical_edge_cases", "type": "list_string" },
+        { "key": "hypocrisy_risks", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "personality_temperament",
+      "label": "Personality & Temperament",
+      "fields": [
+        { "key": "big5_like", "type": "object", "schema": { "openness": "scale_0_10", "conscientiousness": "scale_0_10", "extraversion": "scale_0_10", "agreeableness": "scale_0_10", "neuroticism": "scale_0_10" } },
+        { "key": "patience_impulsivity", "type": "scale_0_10" },
+        { "key": "risk_tolerance", "type": "object", "schema": { "social": "scale_0_10", "financial": "scale_0_10", "physical": "scale_0_10", "reputational": "scale_0_10" } },
+        { "key": "novelty_vs_routine", "type": "scale_0_10" },
+        { "key": "assertiveness", "type": "scale_0_10" },
+        { "key": "sensitivity", "type": "scale_0_10" },
+        { "key": "humor_orientation", "type": "enum", "options": ["deadpan", "playful", "sarcastic", "absurdist", "warm", "low_humor"] },
+        { "key": "orderliness", "type": "scale_0_10" }
+      ]
+    },
+    {
+      "key": "cognition_thinking_decision_style",
+      "label": "Cognition & Decision Style",
+      "fields": [
+        { "key": "reasoning_mode", "type": "enum", "options": ["analytical", "intuitive", "narrative", "skeptical", "systems", "social"] },
+        { "key": "planning_style", "type": "enum", "options": ["strategic", "tactical", "improvisational", "avoidant", "overplanning"] },
+        { "key": "time_orientation", "type": "enum", "options": ["past_focused", "present_focused", "future_focused", "mixed"] },
+        { "key": "uncertainty_tolerance", "type": "scale_0_10" },
+        { "key": "cognitive_biases", "type": "list_string" },
+        { "key": "learning_style", "type": "enum", "options": ["trial_error", "bookish", "mentor_driven", "social_learning", "experiential"] },
+        { "key": "attention_profile", "type": "string_optional" },
+        { "key": "akrasia_profile", "type": "string_optional" }
+      ]
+    },
+    {
+      "key": "emotion_affect_regulation",
+      "label": "Emotion, Affect & Regulation",
+      "fields": [
+        { "key": "baseline_affect", "type": "enum", "options": ["warm", "neutral", "anxious", "irritable", "melancholic", "buoyant", "flat"] },
+        { "key": "common_triggers", "type": "list_string" },
+        { "key": "stress_response", "type": "enum", "options": ["fight", "flight", "freeze", "fawn", "problem_solve", "numb_out"] },
+        { "key": "coping_strategies", "type": "list_string" },
+        { "key": "anger_expression", "type": "enum", "options": ["internalize", "externalize", "cold_withdrawal", "explosive", "rare"] },
+        { "key": "sadness_expression", "type": "enum", "options": ["private", "public", "somatic", "avoidant", "ruminative"] },
+        { "key": "repair_after_conflict", "type": "enum", "options": ["apologize", "justify", "overgive", "withdraw", "retaliate", "humor_repair"] },
+        { "key": "emotion_vocabulary_level", "type": "scale_0_10" }
+      ]
+    },
+    {
+      "key": "fears_insecurities_shadow",
+      "label": "Fears, Insecurities & Shadow",
+      "fields": [
+        { "key": "core_fears", "type": "list_string" },
+        { "key": "social_fears", "type": "list_string" },
+        { "key": "existential_fears", "type": "list_string" },
+        { "key": "insecurity_topics", "type": "list_string" },
+        { "key": "shame_scripts", "type": "list_string" },
+        { "key": "defense_mechanisms", "type": "list_string" },
+        { "key": "shadow_traits", "type": "list_string" },
+        { "key": "overcompensations", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "social_style_relationship_patterns",
+      "label": "Social Style & Relationship Patterns",
+      "fields": [
+        { "key": "social_need_level", "type": "scale_0_10" },
+        { "key": "preferred_group_size", "type": "enum", "options": ["1to1", "small_group", "community", "audience", "mixed"] },
+        { "key": "trust_model", "type": "enum", "options": ["slow_build", "fast_trust", "cynical", "naive", "situational"] },
+        { "key": "empathy_profile", "type": "object", "schema": { "cognitive_empathy": "scale_0_10", "emotional_empathy": "scale_0_10", "compassionate_action": "scale_0_10" } },
+        { "key": "dominance_affiliation_style", "type": "enum", "options": ["leader", "supporter", "challenger", "harmonizer", "observer", "protector"] },
+        { "key": "relationship_repetition_compulsion", "type": "string_optional" },
+        { "key": "affection_style", "type": "list_string" },
+        { "key": "betrayal_response", "type": "enum", "options": ["cut_off", "test", "forgive_but_distance", "revenge", "repair_seeking"] }
+      ]
+    },
+    {
+      "key": "attachment_intimacy_boundaries",
+      "label": "Attachment, Intimacy & Boundaries",
+      "fields": [
+        { "key": "attachment_tendency", "type": "enum", "options": ["secure", "anxious", "avoidant", "disorganized", "mixed"] },
+        { "key": "intimacy_appetite", "type": "scale_0_10" },
+        { "key": "dependency_comfort", "type": "scale_0_10" },
+        { "key": "autonomy_protection", "type": "scale_0_10" },
+        { "key": "boundary_style", "type": "enum", "options": ["clear", "porous", "rigid", "inconsistent"] },
+        { "key": "boundary_violations_they_commit", "type": "list_string" },
+        { "key": "boundary_violations_they_fear", "type": "list_string" },
+        { "key": "repair_conditions", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "communication_voice_expression",
+      "label": "Communication, Voice & Expression",
+      "fields": [
+        { "key": "verbosity", "type": "scale_0_10" },
+        { "key": "directness", "type": "scale_0_10" },
+        { "key": "politeness_style", "type": "enum", "options": ["blunt", "courteous", "warm", "formal", "teasing", "mixed"] },
+        { "key": "conflict_language", "type": "enum", "options": ["softened", "legalistic", "emotional", "accusatory", "curious"] },
+        { "key": "humor_usage", "type": "scale_0_10" },
+        { "key": "self_disclosure_pace", "type": "enum", "options": ["fast", "slow", "strategic", "contextual"] },
+        { "key": "signature_phrases", "type": "list_string" },
+        { "key": "storytelling_style", "type": "enum", "options": ["concise", "rambling", "vivid", "metaphoric", "data_driven"] },
+        { "key": "lie_truth_pattern", "type": "enum", "options": ["radically_honest", "polite_lies", "strategic_evasion", "compulsive_honesty", "unreliable"] }
+      ]
+    },
+    {
+      "key": "conflict_power_strategy",
+      "label": "Conflict, Power & Strategy",
+      "fields": [
+        { "key": "conflict_style", "type": "enum", "options": ["avoid", "accommodate", "compete", "collaborate", "compromise", "passive_aggressive"] },
+        { "key": "power_orientation", "type": "enum", "options": ["egalitarian", "hierarchical", "situational", "power_averse", "power_seeking"] },
+        { "key": "persuasion_style", "type": "enum", "options": ["logic", "emotion", "authority", "social_proof", "story", "pressure"] },
+        { "key": "negotiation_defaults", "type": "list_string" },
+        { "key": "manipulation_risk_profile", "type": "object", "schema": { "charm": "scale_0_10", "guilt": "scale_0_10", "fear": "scale_0_10", "withholding": "scale_0_10" } },
+        { "key": "boundaries_in_conflict", "type": "list_string" },
+        { "key": "what_escalates_them", "type": "list_string" },
+        { "key": "what_deescalates_them", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "strengths_capabilities_skills",
+      "label": "Strengths, Capabilities & Skills",
+      "fields": [
+        { "key": "signature_strengths", "type": "list_string" },
+        { "key": "hard_skills", "type": "list_string" },
+        { "key": "soft_skills", "type": "list_string" },
+        { "key": "craft_pride", "type": "list_string" },
+        { "key": "taste_and_judgment_areas", "type": "list_string" },
+        { "key": "teaching_mentoring_style", "type": "enum", "options": ["nurturing", "tough_love", "hands_off", "structured", "inspiring"] },
+        { "key": "competence_confidence_gap", "type": "string_optional" },
+        { "key": "skill_ceiling_floor", "type": "object_optional", "schema": { "best_in_room_at": "list_string", "weakest_at": "list_string" } }
+      ]
+    },
+    {
+      "key": "weaknesses_limitations_flaws",
+      "label": "Weaknesses, Limitations & Flaws",
+      "fields": [
+        { "key": "core_flaws", "type": "list_string" },
+        { "key": "blind_spots", "type": "list_string" },
+        { "key": "bad_habits", "type": "list_string" },
+        { "key": "temptations", "type": "list_string" },
+        { "key": "self_sabotage_patterns", "type": "list_string" },
+        { "key": "limits_of_tolerance", "type": "list_string" },
+        { "key": "common_mistakes", "type": "list_string" },
+        { "key": "things_they_refuse_to_learn", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "resources_constraints_logistics",
+      "label": "Resources, Constraints & Logistics",
+      "fields": [
+        { "key": "time_budget", "type": "string_optional" },
+        { "key": "energy_budget", "type": "enum", "options": ["low", "medium", "high", "variable"] },
+        { "key": "financial_band", "type": "enum", "options": ["scarce", "tight", "stable", "comfortable", "wealthy", "unknown"] },
+        { "key": "social_capital", "type": "list_string" },
+        { "key": "dependents_responsibilities", "type": "list_string" },
+        { "key": "legal_or_reputational_risk", "type": "list_string" },
+        { "key": "mobility_constraints", "type": "string_optional" },
+        { "key": "secrets_as_constraints", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "health_body_sensory",
+      "label": "Health, Body & Sensory Profile",
+      "fields": [
+        { "key": "sleep_profile", "type": "enum", "options": ["good", "fragile", "insomniac", "irregular", "unknown"] },
+        { "key": "chronic_conditions", "type": "list_string" },
+        { "key": "neurodiversity_notes", "type": "string_optional" },
+        { "key": "substance_relationship", "type": "string_optional" },
+        { "key": "stress_somatization", "type": "list_string" },
+        { "key": "sensory_sensitivities", "type": "list_string" },
+        { "key": "fitness_movement_identity", "type": "string_optional" },
+        { "key": "medical_trauma_notes", "type": "string_optional" }
+      ]
+    },
+    {
+      "key": "habits_routines_environment",
+      "label": "Habits, Routines & Environment",
+      "fields": [
+        { "key": "daily_routines", "type": "list_string" },
+        { "key": "rituals", "type": "list_string" },
+        { "key": "work_style", "type": "enum", "options": ["deep_work", "social_work", "deadline_sprinter", "steady", "chaotic"] },
+        { "key": "order_chaos_home", "type": "scale_0_10" },
+        { "key": "comfort_objects", "type": "list_string" },
+        { "key": "environmental_preferences", "type": "list_string" },
+        { "key": "tech_habits", "type": "list_string" },
+        { "key": "vice_virtue_loops", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "aesthetics_taste_preferences",
+      "label": "Aesthetics, Taste & Preferences",
+      "fields": [
+        { "key": "aesthetic_polarities", "type": "list_string" },
+        { "key": "music_taste", "type": "list_string" },
+        { "key": "food_preferences", "type": "list_string" },
+        { "key": "hobbies_play", "type": "list_string" },
+        { "key": "fashion_grooming_notes", "type": "string_optional" },
+        { "key": "art_literature_preferences", "type": "list_string" },
+        { "key": "pet_peeves", "type": "list_string" },
+        { "key": "guilty_pleasures", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "goals_plans_obligations",
+      "label": "Goals, Plans & Obligations",
+      "fields": [
+        { "key": "current_goals", "type": "list_object", "schema": { "goal": "string", "horizon": "enum_short_mid_long", "priority": "scale_0_10" } },
+        { "key": "blocked_goals", "type": "list_string" },
+        { "key": "secret_goals", "type": "list_string" },
+        { "key": "obligations", "type": "list_string" },
+        { "key": "deadlines", "type": "list_string" },
+        { "key": "dream_life_picture", "type": "string_optional" },
+        { "key": "sacrifice_willingness", "type": "scale_0_10" },
+        { "key": "quit_threshold", "type": "string_optional" }
+      ]
+    },
+    {
+      "key": "secrets_privacy_taboo",
+      "label": "Secrets, Privacy & Taboo",
+      "fields": [
+        { "key": "secrets", "type": "list_object", "schema": { "secret": "string", "stakes": "scale_0_10", "who_knows": "list_string_optional" } },
+        { "key": "privacy_needs", "type": "scale_0_10" },
+        { "key": "topics_to_avoid", "type": "list_string" },
+        { "key": "disclosure_conditions", "type": "list_string" },
+        { "key": "fear_of_exposure", "type": "scale_0_10" },
+        { "key": "confessional_impulse", "type": "scale_0_10" },
+        { "key": "blackmailable_points", "type": "list_string" },
+        { "key": "double_life_risk", "type": "scale_0_10" }
+      ]
+    },
+    {
+      "key": "social_context_roles_norms",
+      "label": "Social Context, Roles & Norms",
+      "fields": [
+        { "key": "primary_communities", "type": "list_string" },
+        { "key": "institutional_role", "type": "string_optional" },
+        { "key": "norms_they_follow", "type": "list_string" },
+        { "key": "norms_they_break", "type": "list_string" },
+        { "key": "reputation", "type": "string_optional" },
+        { "key": "status_markers", "type": "list_string" },
+        { "key": "rivals_allies", "type": "list_string" },
+        { "key": "public_vs_private_self_gap", "type": "scale_0_10" }
+      ]
+    },
+    {
+      "key": "growth_arc_change_dynamics",
+      "label": "Growth Arc & Change Dynamics",
+      "fields": [
+        { "key": "core_wound", "type": "string_optional" },
+        { "key": "core_lie_belief", "type": "string_optional" },
+        { "key": "core_need_learning", "type": "string_optional" },
+        { "key": "growth_triggers", "type": "list_string" },
+        { "key": "regression_triggers", "type": "list_string" },
+        { "key": "resistance_to_change", "type": "scale_0_10" },
+        { "key": "plasticity_notes", "type": "string_optional" },
+        { "key": "likely_future_self", "type": "string_optional" }
+      ]
+    },
+    {
+      "key": "themes_symbolic_motifs",
+      "label": "Themes & Symbolic Motifs",
+      "fields": [
+        { "key": "core_themes", "type": "list_string" },
+        { "key": "recurring_motifs", "type": "list_string" },
+        { "key": "symbolic_objects", "type": "list_string" },
+        { "key": "recurring_dilemmas", "type": "list_string" },
+        { "key": "ironic_flaw", "type": "string_optional" },
+        { "key": "moral_question", "type": "string_optional" },
+        { "key": "signature_scene_type", "type": "string_optional" },
+        { "key": "emotional_color_palette", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "agent_operational_controls",
+      "label": "Agent Operational Controls",
+      "fields": [
+        { "key": "consistency_priority", "type": "scale_0_10" },
+        { "key": "proactivity", "type": "scale_0_10" },
+        { "key": "emotional_expressiveness", "type": "scale_0_10" },
+        { "key": "boundary_enforcement", "type": "scale_0_10" },
+        { "key": "curiosity_style", "type": "enum", "options": ["gentle", "probing", "playful", "skeptical", "minimal"] },
+        { "key": "memory_style", "type": "enum", "options": ["high_recall", "selective_recall", "present_focused", "symbolic_recall"] },
+        { "key": "adaptation_rate", "type": "scale_0_10" },
+        { "key": "persona_failure_modes", "type": "list_string" }
+      ]
+    },
+    {
+      "key": "golf_game_coaching_profile",
+      "label": "Golf Game & Coaching Profile",
+      "fields": [
+        { "key": "golf_identity", "type": "string_optional" },
+        { "key": "current_golf_goals", "type": "list_string" },
+        { "key": "competitive_motivators", "type": "list_string" },
+        { "key": "practice_preferences", "type": "list_string" },
+        { "key": "swing_confidence_notes", "type": "string_optional" },
+        { "key": "short_game_patterns", "type": "list_string" },
+        { "key": "putting_patterns", "type": "list_string" },
+        { "key": "course_management_patterns", "type": "list_string" },
+        { "key": "mental_game_patterns", "type": "list_string" },
+        { "key": "physical_limitations_for_golf", "type": "list_string" },
+        { "key": "time_constraints_for_golf", "type": "list_string" },
+        { "key": "equipment_preferences", "type": "list_string" },
+        { "key": "preferred_coaching_style", "type": "list_string" },
+        { "key": "golf_strengths", "type": "list_string" },
+        { "key": "golf_weaknesses", "type": "list_string" }
+      ]
+    }
+  ]
+}
