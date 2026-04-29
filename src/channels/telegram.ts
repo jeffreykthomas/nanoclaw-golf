@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { Bot } from 'grammy';
 
 import {
@@ -6,6 +9,7 @@ import {
   TRIGGER_PATTERN,
 } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -14,6 +18,22 @@ import {
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
+
+const ATTACHMENT_DIR_NAME = 'attachments';
+const CONTAINER_GROUP_PATH = '/workspace/group';
+const READABLE_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.pdf',
+]);
+
+interface AttachmentSpec {
+  fileId: string;
+  ext: string;
+}
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -245,7 +265,11 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    const storeNonText = (ctx: any, placeholder: string) => {
+    const storeNonText = async (
+      ctx: any,
+      placeholder: string,
+      attachment?: AttachmentSpec,
+    ) => {
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
       const chatJid = buildTelegramJid(ctx.chat.id, entry.ownerKey, isGroup);
@@ -260,6 +284,21 @@ export class TelegramChannel implements Channel {
         ctx.from?.id?.toString() ||
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const msgId = ctx.message.message_id.toString();
+
+      let attachmentSuffix = '';
+      if (attachment) {
+        const containerPath = await this.downloadAttachment(
+          bot,
+          entry.token,
+          group,
+          msgId,
+          attachment,
+        );
+        if (containerPath) {
+          attachmentSuffix = ` ${containerPath}`;
+        }
+      }
 
       this.opts.onChatMetadata(
         chatJid,
@@ -269,23 +308,38 @@ export class TelegramChannel implements Channel {
         isGroup,
       );
       this.opts.onMessage(chatJid, {
-        id: ctx.message.message_id.toString(),
+        id: msgId,
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
         sender_name: senderName,
-        content: `${placeholder}${caption}`,
+        content: `${placeholder}${attachmentSuffix}${caption}`,
         timestamp,
         is_from_me: false,
       });
     };
 
-    bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    bot.on('message:photo', async (ctx) => {
+      // Telegram delivers an array of sizes; the last is the largest.
+      const sizes = ctx.message.photo || [];
+      const largest = sizes[sizes.length - 1];
+      const attachment = largest?.file_id
+        ? { fileId: largest.file_id, ext: '.jpg' }
+        : undefined;
+      await storeNonText(ctx, '[Photo]', attachment);
+    });
     bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    bot.on('message:document', async (ctx) => {
+      const doc = ctx.message.document;
+      const name = doc?.file_name || 'file';
+      const ext =
+        (doc?.file_name && path.extname(doc.file_name).toLowerCase()) || '';
+      const attachment =
+        doc?.file_id && READABLE_EXTENSIONS.has(ext)
+          ? { fileId: doc.file_id, ext }
+          : undefined;
+      await storeNonText(ctx, `[Document: ${name}]`, attachment);
     });
     bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
@@ -319,6 +373,64 @@ export class TelegramChannel implements Channel {
     });
 
     this.bots.push(entry);
+  }
+
+  private async downloadAttachment(
+    bot: Bot,
+    token: string,
+    group: RegisteredGroup,
+    msgId: string,
+    attachment: AttachmentSpec,
+  ): Promise<string | null> {
+    let groupDir: string;
+    try {
+      groupDir = resolveGroupFolderPath(group.folder);
+    } catch (err) {
+      logger.warn(
+        { folder: group.folder, err: (err as Error).message },
+        'Telegram: cannot resolve group folder for attachment',
+      );
+      return null;
+    }
+
+    const filename = `${msgId}${attachment.ext}`;
+    const hostDir = path.join(groupDir, ATTACHMENT_DIR_NAME);
+    const hostPath = path.join(hostDir, filename);
+    const containerPath = `${CONTAINER_GROUP_PATH}/${ATTACHMENT_DIR_NAME}/${filename}`;
+
+    try {
+      const file = await bot.api.getFile(attachment.fileId);
+      if (!file.file_path) {
+        logger.warn(
+          { fileId: attachment.fileId, folder: group.folder },
+          'Telegram: getFile returned no file_path',
+        );
+        return null;
+      }
+      const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        logger.warn(
+          { status: res.status, fileId: attachment.fileId },
+          'Telegram: attachment download failed',
+        );
+        return null;
+      }
+      const bytes = Buffer.from(await res.arrayBuffer());
+      fs.mkdirSync(hostDir, { recursive: true });
+      fs.writeFileSync(hostPath, bytes);
+      logger.info(
+        { folder: group.folder, msgId, bytes: bytes.length, containerPath },
+        'Telegram: attachment saved',
+      );
+      return containerPath;
+    } catch (err) {
+      logger.warn(
+        { fileId: attachment.fileId, err: (err as Error).message },
+        'Telegram: attachment download error',
+      );
+      return null;
+    }
   }
 
   private rememberOwner(chatJid: string, ownerKey: string): void {

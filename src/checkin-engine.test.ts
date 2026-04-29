@@ -69,4 +69,17 @@ describe('buildCheckInMessage', () => {
     expect(message).toContain('Quick check-in');
     expect(message).toContain('12 populated fields');
   });
+
+  it('prefers recent context over the compact profile summary', () => {
+    const message = buildCheckInMessage({
+      summary:
+        'This profile currently has 12 populated fields. current golf goals: compete in club championship this weekend.',
+      recentContext:
+        'Most recent signal (2026-04-21): golf — processed the club championship results',
+      urgency: 'gentle',
+    });
+
+    expect(message).toContain('processed the club championship results');
+    expect(message).not.toContain('this weekend');
+  });
 });

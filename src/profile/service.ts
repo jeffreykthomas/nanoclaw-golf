@@ -363,3 +363,143 @@ export async function getLatestProfileSummary(
 ): Promise<string | null> {
   return readCompactProfileSummary(String(userId));
 }
+
+function formatFactDate(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return 'recently';
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function compactFactText(value: string, limit = 220): string {
+  const compacted = value.replace(/\s+/g, ' ').trim();
+  if (compacted.length <= limit) return compacted;
+  return `${compacted.slice(0, limit - 1).trim()}…`;
+}
+
+function renderCheckInFact(prefix: string, fact: ProfileFact): string {
+  return `${prefix} (${formatFactDate(fact.at)}): ${fact.category} — ${compactFactText(fact.fact)}`;
+}
+
+export async function getLatestCheckInContext(
+  userId: string,
+): Promise<string | null> {
+  const facts = (await loadProfileFacts(String(userId), 60)).filter(
+    (fact) => fact.category !== 'other',
+  );
+  if (facts.length === 0) return null;
+
+  const latest = facts.at(-1);
+  const latestGolf = [...facts]
+    .reverse()
+    .find((fact) => ['golf', 'goal', 'priority'].includes(fact.category));
+
+  const lines: string[] = [];
+  if (latest) lines.push(renderCheckInFact('Most recent signal', latest));
+  if (latestGolf && latestGolf.id !== latest?.id) {
+    lines.push(renderCheckInFact('Latest golf thread', latestGolf));
+  }
+
+  return lines.join('\n');
+}
+
+export async function getUserProfileInventoryView(userId: string): Promise<{
+  schema_name: string;
+  schema_version: string;
+  user_id: string;
+  profile_exists: boolean;
+  updated_at: string | null;
+  counts: {
+    total_fields: number;
+    populated_fields: number;
+    unknown_fields: number;
+  };
+  categories: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    counts: {
+      total_fields: number;
+      populated_fields: number;
+      unknown_fields: number;
+    };
+    fields: Array<{
+      key: string;
+      type: string;
+      prompt?: string;
+      options?: string[];
+      schema?: Record<string, string>;
+      value: unknown;
+      populated: boolean;
+      metadata: {
+        confidence: number | null;
+        evidenceCount: number;
+        sources: string[];
+        updatedAt: string | null;
+      };
+    }>;
+  }>;
+}> {
+  const schema = await loadUserProfileSchema();
+  const profile = await loadUserProfileDocument(String(userId));
+  const inventory = profile?.inventory ?? createEmptyInventory(schema);
+  const fieldMetadata =
+    profile?.field_metadata ?? createEmptyFieldMetadata(schema);
+
+  let populatedFields = 0;
+  const categories = schema.top_level_categories.map((category) => {
+    let categoryPopulatedFields = 0;
+    const values = inventory[category.key] ?? {};
+    const metadata = fieldMetadata[category.key] ?? {};
+    const fields = category.fields.map((field) => {
+      const value = values[field.key] ?? null;
+      const populated = value !== null && value !== undefined;
+      if (populated) {
+        populatedFields += 1;
+        categoryPopulatedFields += 1;
+      }
+
+      return {
+        key: field.key,
+        type: field.type,
+        prompt: field.prompt,
+        options: field.options,
+        schema: field.schema,
+        value,
+        populated,
+        metadata: metadata[field.key] ?? {
+          confidence: null,
+          evidenceCount: 0,
+          sources: [],
+          updatedAt: null,
+        },
+      };
+    });
+
+    return {
+      key: category.key,
+      label: category.label,
+      description: category.description,
+      counts: {
+        total_fields: category.fields.length,
+        populated_fields: categoryPopulatedFields,
+        unknown_fields: category.fields.length - categoryPopulatedFields,
+      },
+      fields,
+    };
+  });
+
+  const totalFields = countInventoryFields(schema);
+  return {
+    schema_name: schema.schema_name,
+    schema_version: schema.schema_version,
+    user_id: String(userId),
+    profile_exists: Boolean(profile),
+    updated_at: profile?.updated_at ?? null,
+    counts: {
+      total_fields: totalFields,
+      populated_fields: populatedFields,
+      unknown_fields: totalFields - populatedFields,
+    },
+    categories,
+  };
+}

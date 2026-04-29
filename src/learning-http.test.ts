@@ -55,4 +55,60 @@ describe('buildLearningPrompt', () => {
     expect(prompt).toContain('Read the files in /workspace/group');
     expect(prompt).toContain('Return JSON:');
   });
+
+  it('describes end-to-end research for research_node tasks', () => {
+    const request = LearningRequestSchema.parse({
+      requestId: 'req-2',
+      transport: 'app',
+      userId: 42,
+      learningNodeId: 7,
+      taskType: 'research_node',
+      node: {
+        title: 'Quantum Physics',
+        summary: '',
+        bodyMarkdown: '',
+        breadcrumbs: ['Science'],
+      },
+      sources: [],
+      children: [],
+      relatedTitles: [],
+      existingTitles: [],
+    });
+
+    const prompt = buildLearningPrompt(request);
+
+    expect(prompt).toContain('Task: research_node');
+    expect(prompt).toContain('Research this topic end-to-end');
+    expect(prompt).toContain('"summary_markdown"');
+  });
+
+  it('describes focused summarization for summarize_source tasks', () => {
+    const request = LearningRequestSchema.parse({
+      requestId: 'req-3',
+      transport: 'app',
+      userId: 42,
+      learningNodeId: 7,
+      taskType: 'summarize_source',
+      node: {
+        title: 'Quantum Physics',
+        summary: '',
+        bodyMarkdown: '',
+        breadcrumbs: ['Science'],
+      },
+      sources: [
+        {
+          id: 1,
+          title: 'Intro paper',
+          url: 'https://example.com/paper',
+          extractedContent: 'Wavefunctions and measurement.',
+        },
+      ],
+    });
+
+    const prompt = buildLearningPrompt(request);
+
+    expect(prompt).toContain('Task: summarize_source');
+    expect(prompt).toContain('Summarize the source material');
+    expect(prompt).toContain('"key_points"');
+  });
 });

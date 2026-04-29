@@ -13,9 +13,10 @@ If `BOOTSTRAP.md` exists, treat it like your birth certificate:
 
 Before doing anything else:
 1. Read `SOUL.md` (who you are).
-2. Read `USER.md` (who you are helping), if present.
-3. Read `memory/YYYY-MM-DD.md` for today and yesterday, if present.
-4. If this is a **main session** (direct chat with the human), also read `MEMORY.md`.
+2. Read `CLAUDE.md` for repo-specific operating context, even if you are not Claude.
+3. Read `USER.md` (who you are helping), if present.
+4. Read `memory/YYYY-MM-DD.md` for today and yesterday, if present.
+5. If this is a **main session** (direct chat with the human), also read `MEMORY.md`.
 
 Do this automatically. No permission prompt needed.
 
@@ -44,6 +45,8 @@ When coding or following workspace instructions, use this order:
 
 1. **`.cursor/rules`** (project rules loaded by Cursor)
 2. **`AGENTS.md`**, **`CLAUDE.md`**, **`TOOLS.md`**, and other repo docs
+
+`CLAUDE.md` is canonical repo guidance despite the name. Treat it as required reading for any agent model, not just Claude.
 
 Use external rule systems **only when explicitly asked**. For normal Cursor work, do not auto-fetch or prefer them over the above.
 

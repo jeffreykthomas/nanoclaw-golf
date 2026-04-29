@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
@@ -12,6 +16,15 @@ vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
+}));
+
+// Group folder resolver — return a per-test temp dir under tmp
+const groupFolderRoot = vi.hoisted(() => ({
+  current: '' as string,
+}));
+vi.mock('../group-folder.js', () => ({
+  resolveGroupFolderPath: (folder: string) =>
+    path.join(groupFolderRoot.current, folder),
 }));
 
 // Mock logger
@@ -40,6 +53,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file_0.jpg' }),
     };
 
     constructor(token: string) {
@@ -185,12 +199,28 @@ async function triggerMediaMessage(
 // --- Tests ---
 
 describe('TelegramChannel', () => {
+  let tmpRoot: string;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-test-'));
+    groupFolderRoot.current = tmpRoot;
+
+    // Default fetch mock — returns 4 fake bytes.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+      })),
+    );
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
   // --- Connection lifecycle ---
@@ -558,31 +588,82 @@ describe('TelegramChannel', () => {
   // --- Non-text messages ---
 
   describe('non-text messages', () => {
-    it('stores photo with placeholder', async () => {
+    it('downloads largest photo and references container path', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      const ctx = createMediaCtx({
+        messageId: 42,
+        extra: {
+          photo: [
+            { file_id: 'small-id' },
+            { file_id: 'medium-id' },
+            { file_id: 'large-id' },
+          ],
+        },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(currentBot().api.getFile).toHaveBeenCalledWith('large-id');
+      expect(fetch).toHaveBeenCalledWith(
+        'https://api.telegram.org/file/bottest-token/photos/file_0.jpg',
+      );
+      const savedPath = path.join(
+        tmpRoot,
+        'test-group',
+        'attachments',
+        '42.jpg',
+      );
+      expect(fs.existsSync(savedPath)).toBe(true);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo] /workspace/group/attachments/42.jpg',
+        }),
+      );
+    });
+
+    it('appends caption after attachment path', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        caption: 'Look at this',
+        extra: { photo: [{ file_id: 'large-id' }] },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo] /workspace/group/attachments/1.jpg Look at this',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when photo download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: false,
+          status: 500,
+          arrayBuffer: async () => new ArrayBuffer(0),
+        })),
+      );
+
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'large-id' }] },
+      });
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '[Photo]' }),
-      );
-    });
-
-    it('stores photo with caption', async () => {
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('test-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({ caption: 'Look at this' });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo] Look at this' }),
       );
     });
 
@@ -628,19 +709,55 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores document with filename', async () => {
+    it('downloads readable documents (pdf) and references path', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      currentBot().api.getFile.mockResolvedValueOnce({
+        file_path: 'documents/file_3.pdf',
+      });
+
+      const ctx = createMediaCtx({
+        messageId: 7,
+        extra: {
+          document: { file_id: 'doc-id', file_name: 'report.pdf' },
+        },
+      });
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(currentBot().api.getFile).toHaveBeenCalledWith('doc-id');
+      const savedPath = path.join(
+        tmpRoot,
+        'test-group',
+        'attachments',
+        '7.pdf',
+      );
+      expect(fs.existsSync(savedPath)).toBe(true);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Document: report.pdf] /workspace/group/attachments/7.pdf',
+        }),
+      );
+    });
+
+    it('does not download non-readable documents', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
       const ctx = createMediaCtx({
-        extra: { document: { file_name: 'report.pdf' } },
+        extra: {
+          document: { file_id: 'doc-id', file_name: 'archive.zip' },
+        },
       });
       await triggerMediaMessage('message:document', ctx);
 
+      expect(currentBot().api.getFile).not.toHaveBeenCalled();
+      expect(fetch).not.toHaveBeenCalled();
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: report.pdf]' }),
+        expect.objectContaining({ content: '[Document: archive.zip]' }),
       );
     });
 

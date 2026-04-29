@@ -1,5 +1,7 @@
 # NanoClaw
 
+Read `AGENTS.md` first for workspace operating rules and startup requirements. This file is repo-specific guidance that applies to any agent model, not just Claude.
+
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for architecture decisions.
 
 ## Quick Context

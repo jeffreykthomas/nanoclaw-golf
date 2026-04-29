@@ -1,5 +1,6 @@
 import http from 'http';
 import fs from 'fs';
+import path from 'path';
 
 import { z } from 'zod';
 
@@ -9,9 +10,11 @@ import {
   CLAW_SIBLING_TOKEN,
   COACH_APP_URL,
   COACH_FIRST_RESULT_TIMEOUT,
+  DATA_DIR,
 } from './config.js';
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import {
+  clearPendingCheckInMessages,
   getSession,
   getPendingCheckInMessages,
   markCheckInMessagesDelivered,
@@ -19,10 +22,13 @@ import {
 } from './db.js';
 import {
   detectProfileCommand,
+  getLatestCheckInContext,
   getLatestProfileSummary,
   getProfileCommandResponse,
+  getUserProfileInventoryView,
   queueUserProfileUpdate,
 } from './profile/service.js';
+import { triggerArccosSyncInBackground } from './arccos-sync.js';
 import { handleLearningRequest } from './learning-http.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -180,6 +186,7 @@ export function extractInsightRequests(
 export function buildPrompt(
   req: CoachRequest,
   profileSummary?: string | null,
+  recentProfileContext?: string | null,
 ): string {
   const contextXml =
     Object.keys(req.context).length > 0
@@ -188,12 +195,16 @@ export function buildPrompt(
   const profileXml = profileSummary?.trim()
     ? `\n<user-profile-summary>${escapeXml(profileSummary.trim())}</user-profile-summary>`
     : '';
+  const recentProfileXml = recentProfileContext?.trim()
+    ? `\n<recent-profile-context>${escapeXml(recentProfileContext.trim())}</recent-profile-context>`
+    : '';
 
   return [
     `<coach-request phase="${escapeXml(req.phase)}" userId="${req.userId}">`,
     `<message>${escapeXml(req.message)}</message>`,
     contextXml,
     profileXml,
+    recentProfileXml,
     `</coach-request>`,
   ]
     .filter(Boolean)
@@ -213,6 +224,214 @@ function getCoachGroup(coachSessionId: number): RegisteredGroup {
     requiresTrigger: false,
     isMain: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Coach container pool — reuse containers across HTTP requests within a session
+// ---------------------------------------------------------------------------
+
+const COACH_IDLE_CLOSE_MS = parseInt(
+  process.env.COACH_IDLE_CLOSE_MS || '120000',
+  10,
+);
+
+interface PendingCoachResponse {
+  resolve: (result: { text: string; newSessionId?: string }) => void;
+  reject: (err: Error) => void;
+  outputChunks: string[];
+  rawOutputChunks: string[];
+  newSessionId?: string;
+  firstResultResolved: boolean;
+  coachReq: CoachRequest;
+}
+
+interface PooledCoachContainer {
+  chatJid: string;
+  groupFolder: string;
+  idle: boolean;
+  exited: boolean;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  pending: PendingCoachResponse | null;
+}
+
+const coachContainerPool = new Map<string, PooledCoachContainer>();
+
+function writeCoachIpcMessage(groupFolder: string, text: string): boolean {
+  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+  try {
+    fs.mkdirSync(inputDir, { recursive: true });
+    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+    const filepath = path.join(inputDir, filename);
+    const tempPath = `${filepath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+    fs.renameSync(tempPath, filepath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writeCoachIpcClose(groupFolder: string): void {
+  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+  try {
+    fs.mkdirSync(inputDir, { recursive: true });
+    fs.writeFileSync(path.join(inputDir, '_close'), '');
+  } catch {
+    /* ignore */
+  }
+}
+
+function scheduleCoachIdleClose(entry: PooledCoachContainer): void {
+  if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = setTimeout(() => {
+    if (entry.idle && !entry.exited) {
+      logger.info({ chatJid: entry.chatJid }, 'Coach container idle close');
+      writeCoachIpcClose(entry.groupFolder);
+    }
+    coachContainerPool.delete(entry.chatJid);
+  }, COACH_IDLE_CLOSE_MS);
+}
+
+async function doCoachPostResponseWork(
+  entry: PooledCoachContainer,
+  pending: PendingCoachResponse,
+): Promise<void> {
+  const userId = String(pending.coachReq.userId);
+
+  await queueUserProfileUpdate({
+    userId,
+    coachSessionId: pending.coachReq.coachSessionId,
+    message: pending.coachReq.message,
+    responseText: pending.outputChunks.join('\n\n'),
+    context: pending.coachReq.context,
+  });
+
+  const insightRequests = extractInsightRequests(
+    pending.rawOutputChunks.join('\n'),
+    pending.coachReq,
+  );
+  for (const insightRequest of insightRequests) {
+    try {
+      await createInsightInCoachApp(insightRequest);
+    } catch (error) {
+      logger.warn(
+        {
+          error,
+          userId,
+          coachSessionId: pending.coachReq.coachSessionId,
+          chatJid: entry.chatJid,
+        },
+        'Insight relay failed after coach response',
+      );
+    }
+  }
+}
+
+function handleCoachContainerOutput(
+  entry: PooledCoachContainer,
+  output: ContainerOutput,
+): void {
+  if (!entry.pending) return;
+
+  const pending = entry.pending;
+
+  if (output.newSessionId) {
+    pending.newSessionId = output.newSessionId;
+    setSession(entry.groupFolder, output.newSessionId);
+  }
+
+  if (output.result) {
+    const raw =
+      typeof output.result === 'string'
+        ? output.result
+        : JSON.stringify(output.result);
+    pending.rawOutputChunks.push(raw);
+    const text = formatOutbound(raw);
+    if (text) {
+      pending.outputChunks.push(text);
+      if (!pending.firstResultResolved) {
+        pending.firstResultResolved = true;
+        pending.resolve({
+          text: pending.outputChunks.join('\n\n'),
+          newSessionId: pending.newSessionId,
+        });
+      }
+    }
+  }
+
+  if (output.status === 'success') {
+    entry.idle = true;
+    const finishedPending = entry.pending;
+    entry.pending = null;
+
+    if (!finishedPending.firstResultResolved) {
+      finishedPending.firstResultResolved = true;
+      finishedPending.resolve({
+        text: finishedPending.outputChunks.join('\n\n') || '',
+        newSessionId: finishedPending.newSessionId,
+      });
+    }
+
+    doCoachPostResponseWork(entry, finishedPending).catch((err) => {
+      logger.warn({ err, chatJid: entry.chatJid }, 'Post-response work failed');
+    });
+
+    scheduleCoachIdleClose(entry);
+  }
+
+  if (output.status === 'error') {
+    if (!pending.firstResultResolved) {
+      pending.firstResultResolved = true;
+      pending.reject(new Error('container_error'));
+    }
+  }
+}
+
+function spawnCoachContainer(
+  chatJid: string,
+  group: RegisteredGroup,
+  sessionId: string | undefined,
+  prompt: string,
+  pending: PendingCoachResponse,
+): PooledCoachContainer {
+  const entry: PooledCoachContainer = {
+    chatJid,
+    groupFolder: group.folder,
+    idle: false,
+    exited: false,
+    idleTimer: null,
+    pending,
+  };
+  coachContainerPool.set(chatJid, entry);
+
+  const containerPromise = runContainerAgent(
+    group,
+    {
+      prompt,
+      sessionId,
+      groupFolder: group.folder,
+      chatJid,
+      isMain: false,
+      assistantName: ASSISTANT_NAME,
+    },
+    () => {},
+    async (streamOutput: ContainerOutput) => {
+      handleCoachContainerOutput(entry, streamOutput);
+    },
+  );
+
+  const cleanup = () => {
+    entry.exited = true;
+    coachContainerPool.delete(chatJid);
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    if (entry.pending && !entry.pending.firstResultResolved) {
+      entry.pending.reject(new Error('container_exited_before_result'));
+    }
+  };
+
+  containerPromise.then(cleanup).catch(cleanup);
+
+  return entry;
 }
 
 async function handleCoachRequest(
@@ -246,6 +465,8 @@ async function handleCoachRequest(
     return;
   }
 
+  clearPendingCheckInMessages(String(coachReq.userId));
+
   const reqLogger = logger.child({ requestId: coachReq.requestId });
   reqLogger.info(
     {
@@ -256,8 +477,7 @@ async function handleCoachRequest(
     'Coach request received',
   );
 
-  const group = getCoachGroup(coachReq.coachSessionId);
-  const sessionId = getSession(group.folder);
+  const chatJid = `app:coach-${coachReq.coachSessionId}`;
   const userId = String(coachReq.userId);
   const profileCommand = detectProfileCommand(coachReq.message);
   if (profileCommand) {
@@ -270,63 +490,50 @@ async function handleCoachRequest(
     return;
   }
 
-  const profileSummary = await getLatestProfileSummary(userId);
-  const prompt = buildPrompt(coachReq, profileSummary);
+  const [profileSummary, recentProfileContext] = await Promise.all([
+    getLatestProfileSummary(userId),
+    getLatestCheckInContext(userId),
+  ]);
+  const prompt = buildPrompt(coachReq, profileSummary, recentProfileContext);
 
-  const outputChunks: string[] = [];
-  const rawOutputChunks: string[] = [];
-  let newSessionId: string | undefined;
-  let firstResultResolved = false;
-  let resolveFirstResult:
-    | ((value: { text: string; newSessionId?: string }) => void)
-    | null = null;
-  const firstResultPromise = new Promise<{
-    text: string;
-    newSessionId?: string;
-  }>((resolve) => {
-    resolveFirstResult = resolve;
-  });
+  const pending: PendingCoachResponse = {
+    resolve: null!,
+    reject: null!,
+    outputChunks: [],
+    rawOutputChunks: [],
+    firstResultResolved: false,
+    coachReq,
+  };
+
+  const resultPromise = new Promise<{ text: string; newSessionId?: string }>(
+    (resolve, reject) => {
+      pending.resolve = resolve;
+      pending.reject = reject;
+    },
+  );
+
+  const existingEntry = coachContainerPool.get(chatJid);
+
+  if (existingEntry && !existingEntry.exited && existingEntry.idle) {
+    reqLogger.info('Reusing active coach container');
+    if (existingEntry.idleTimer) clearTimeout(existingEntry.idleTimer);
+    existingEntry.idle = false;
+    existingEntry.pending = pending;
+
+    if (!writeCoachIpcMessage(existingEntry.groupFolder, prompt)) {
+      reqLogger.warn('IPC write failed, spawning new container');
+      coachContainerPool.delete(chatJid);
+      const group = getCoachGroup(coachReq.coachSessionId);
+      const sessionId = getSession(group.folder);
+      spawnCoachContainer(chatJid, group, sessionId, prompt, pending);
+    }
+  } else {
+    const group = getCoachGroup(coachReq.coachSessionId);
+    const sessionId = getSession(group.folder);
+    spawnCoachContainer(chatJid, group, sessionId, prompt, pending);
+  }
 
   try {
-    const outputPromise = runContainerAgent(
-      group,
-      {
-        prompt,
-        sessionId,
-        groupFolder: group.folder,
-        chatJid: `app:coach-${coachReq.coachSessionId}`,
-        isMain: false,
-        assistantName: ASSISTANT_NAME,
-      },
-      () => {
-        // No queue registration needed for synchronous HTTP
-      },
-      async (streamOutput: ContainerOutput) => {
-        if (streamOutput.newSessionId) {
-          newSessionId = streamOutput.newSessionId;
-          setSession(group.folder, streamOutput.newSessionId);
-        }
-        if (streamOutput.result) {
-          const raw =
-            typeof streamOutput.result === 'string'
-              ? streamOutput.result
-              : JSON.stringify(streamOutput.result);
-          rawOutputChunks.push(raw);
-          const text = formatOutbound(raw);
-          if (text) {
-            outputChunks.push(text);
-            if (!firstResultResolved && resolveFirstResult) {
-              firstResultResolved = true;
-              resolveFirstResult({
-                text: outputChunks.join('\n\n'),
-                newSessionId,
-              });
-            }
-          }
-        }
-      },
-    );
-
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(
         () => reject(new Error('first_result_timeout')),
@@ -334,59 +541,20 @@ async function handleCoachRequest(
       ).unref();
     });
 
-    const firstResult = await Promise.race([
-      firstResultPromise,
-      timeoutPromise,
-    ]);
+    const firstResult = await Promise.race([resultPromise, timeoutPromise]);
 
-    if (firstResult.newSessionId) {
-      setSession(group.folder, firstResult.newSessionId);
-    }
-
-    outputPromise.catch((err) => {
-      reqLogger.warn({ err }, 'Container promise rejected after response');
-    });
-
-    outputPromise
-      .then(async () => {
-        await queueUserProfileUpdate({
-          userId,
-          coachSessionId: coachReq.coachSessionId,
-          message: coachReq.message,
-          responseText: outputChunks.join('\n\n'),
-          context: coachReq.context,
-        });
-
-        const insightRequests = extractInsightRequests(
-          rawOutputChunks.join('\n'),
-          coachReq,
-        );
-        for (const insightRequest of insightRequests) {
-          try {
-            await createInsightInCoachApp(insightRequest);
-          } catch (error) {
-            reqLogger.warn(
-              { error, userId, coachSessionId: coachReq.coachSessionId },
-              'Insight relay failed after coach response',
-            );
-          }
-        }
-      })
-      .catch((err) => {
-        reqLogger.warn(
-          { err, userId },
-          'Profile update failed after coach response',
-        );
-      });
-
-    const combinedText = firstResult.text;
-    await sendTelegramMirrorMessage(combinedText);
+    await sendTelegramMirrorMessage(firstResult.text);
     reqLogger.info(
-      { responseLength: combinedText.length },
+      { responseLength: firstResult.text.length },
       'Coach response sent',
     );
-    jsonResponse(res, 200, { text: combinedText });
+    jsonResponse(res, 200, { text: firstResult.text });
   } catch (err) {
+    const entry = coachContainerPool.get(chatJid);
+    if (entry && entry.pending === pending) {
+      entry.pending = null;
+    }
+
     reqLogger.error({ err }, 'Unexpected error');
     jsonResponse(res, 500, { error: 'internal_error' });
   }
@@ -426,6 +594,37 @@ async function handleCoachInsightRequest(
   }
 }
 
+async function handleArccosSyncTrigger(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!ensureAuthorized(req, res)) {
+    return;
+  }
+  let body: unknown;
+  try {
+    body = await parseJsonBody(req);
+  } catch {
+    jsonResponse(res, 400, { error: 'invalid_json' });
+    return;
+  }
+  const obj = (body ?? {}) as Record<string, unknown>;
+  const userIdRaw = obj.user_id;
+  const userId =
+    typeof userIdRaw === 'number'
+      ? userIdRaw
+      : typeof userIdRaw === 'string'
+        ? parseInt(userIdRaw, 10)
+        : NaN;
+  if (!Number.isInteger(userId) || userId <= 0) {
+    jsonResponse(res, 400, { error: 'invalid_user_id' });
+    return;
+  }
+  const force = obj.force !== false;
+  triggerArccosSyncInBackground({ userId, force });
+  jsonResponse(res, 202, { status: 'accepted', user_id: userId });
+}
+
 function handleCheckInsRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -455,6 +654,30 @@ function handleCheckInsRequest(
   });
 }
 
+async function handleProfileInventoryRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!ensureAuthorized(req, res)) {
+    return;
+  }
+
+  const url = new URL(req.url!, `http://${req.headers.host}`);
+  const userId = url.searchParams.get('userId');
+  if (!userId) {
+    jsonResponse(res, 400, { error: 'missing_userId_param' });
+    return;
+  }
+
+  try {
+    const inventory = await getUserProfileInventoryView(userId);
+    jsonResponse(res, 200, { inventory });
+  } catch (error) {
+    logger.warn({ error, userId }, 'Profile inventory request failed');
+    jsonResponse(res, 500, { error: 'profile_inventory_failed' });
+  }
+}
+
 export async function startCoachHttpServer(options?: {
   continueOnPortInUse?: boolean;
 }): Promise<http.Server | null> {
@@ -482,6 +705,16 @@ export async function startCoachHttpServer(options?: {
 
     if (req.method === 'GET' && req.url?.startsWith('/v1/coach/checkins')) {
       handleCheckInsRequest(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url?.startsWith('/v1/profile/inventory')) {
+      await handleProfileInventoryRequest(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/v1/arccos/sync') {
+      await handleArccosSyncTrigger(req, res);
       return;
     }
 

@@ -51,6 +51,19 @@ describe('BipbotGatewayClient', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('uses the stable job id as the request id for codex jobs', async () => {
+    await client.createCodexJob({
+      jobId: 'job-BIP-123-abcdef1234567890',
+      issueId: 'BIP-123',
+      prompt: 'Implement the approved fix.',
+    });
+
+    const [, opts] = fetchMock.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.requestId).toBe('job-BIP-123-abcdef1234567890');
+    expect(body.payload.jobId).toBe('job-BIP-123-abcdef1234567890');
+  });
+
   it('retries on 5xx responses', async () => {
     fetchMock
       .mockResolvedValueOnce({

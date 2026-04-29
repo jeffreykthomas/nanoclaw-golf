@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -8,6 +10,12 @@ import { logger } from './logger.js';
 interface GatewayResult {
   success: boolean;
   message: string;
+}
+
+interface ExistingPullRequest {
+  number: number;
+  title: string;
+  url: string;
 }
 
 let gatewayClient: BipbotGatewayClient | null | undefined;
@@ -67,6 +75,103 @@ function fail(message: string): GatewayResult {
   return { success: false, message };
 }
 
+function normalizePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, ' ').trim();
+}
+
+function buildCodexJobId(params: {
+  issueId: string;
+  repoUrl: string;
+  branch: string;
+  prompt: string;
+  agent: 'codex' | 'claude';
+}): string {
+  const fingerprint = createHash('sha1')
+    .update(
+      [
+        params.issueId.trim().toLowerCase(),
+        params.repoUrl.trim(),
+        params.branch.trim(),
+        params.agent,
+        normalizePrompt(params.prompt),
+      ].join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16);
+
+  return `job-${params.issueId}-${fingerprint}`;
+}
+
+function parseGitHubRepo(repoUrl: string): string | null {
+  const trimmed = repoUrl.trim();
+  const httpsMatch = trimmed.match(
+    /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+  );
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  const sshMatch = trimmed.match(
+    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i,
+  );
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  const sshUrlMatch = trimmed.match(
+    /^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
+  );
+  if (sshUrlMatch) {
+    return `${sshUrlMatch[1]}/${sshUrlMatch[2]}`;
+  }
+
+  return null;
+}
+
+async function findExistingOpenPullRequest(
+  repoUrl: string,
+  jobId: string,
+): Promise<ExistingPullRequest | null> {
+  const repo = parseGitHubRepo(repoUrl);
+  if (!repo) return null;
+
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'gh',
+        [
+          'pr',
+          'list',
+          '--repo',
+          repo,
+          '--state',
+          'open',
+          '--search',
+          `"${jobId}"`,
+          '--json',
+          'number,title,url',
+        ],
+        (err, execStdout) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(execStdout);
+        },
+      );
+    });
+
+    const pullRequests = JSON.parse(stdout) as ExistingPullRequest[];
+    return pullRequests[0] ?? null;
+  } catch (err) {
+    logger.warn(
+      { err, jobId, repoUrl },
+      'Failed to check for existing BipBot pull requests',
+    );
+    return null;
+  }
+}
+
 export async function handleBipbotGatewayIpc(
   data: Record<string, unknown>,
   sourceGroup: string,
@@ -116,8 +221,26 @@ export async function handleBipbotGatewayIpc(
           break;
         }
         const claudeModel = getOptionalString(data, 'claudeModel');
+        const jobId = buildCodexJobId({
+          issueId,
+          repoUrl,
+          branch,
+          prompt,
+          agent,
+        });
+        const existingPullRequest = await findExistingOpenPullRequest(
+          repoUrl,
+          jobId,
+        );
+        if (existingPullRequest) {
+          result = {
+            success: true,
+            message: `Skipped ${agent} job for ${issueId}; open PR already exists: ${existingPullRequest.url}`,
+          };
+          break;
+        }
         await client.createCodexJob({
-          jobId: `job-${issueId}-v${version}`,
+          jobId,
           issueId,
           version,
           repoUrl,

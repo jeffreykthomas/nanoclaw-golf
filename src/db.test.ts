@@ -13,11 +13,13 @@ import {
   getNewMessages,
   getTaskById,
   getUserProfileIndex,
+  getPendingCheckInMessages,
   markUserCheckInSent,
   markUserProfileReportGenerated,
   setChatChannelOwner,
   setRegisteredGroup,
   storeChatMetadata,
+  storeCheckInMessage,
   storeMessage,
   upsertUserProfileIndex,
   updateTask,
@@ -217,6 +219,28 @@ describe('user profile index', () => {
     const profile = getUserProfileIndex('42');
     expect(profile?.last_checkin_at).toBe('2026-03-26T18:00:00.000Z');
     expect(getAllUserProfileIndexes()).toHaveLength(1);
+  });
+
+  it('keeps only the latest pending check-in per user', () => {
+    storeCheckInMessage('42', 'first stale check-in');
+    storeCheckInMessage('42', 'latest check-in');
+
+    const pending = getPendingCheckInMessages('42');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].message).toBe('latest check-in');
+  });
+
+  it('drops pending check-ins older than the latest user interaction', () => {
+    storeCheckInMessage('42', 'old check-in');
+    upsertUserProfileIndex({
+      user_id: '42',
+      coach_session_id: 9,
+      updated_at: '2099-03-26T11:00:00.000Z',
+      last_interaction_at: '2099-03-26T11:00:00.000Z',
+      evidence_count: 9,
+    });
+
+    expect(getPendingCheckInMessages('42')).toHaveLength(0);
   });
 });
 

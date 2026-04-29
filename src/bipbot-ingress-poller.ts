@@ -2,6 +2,7 @@ import fs from 'fs';
 
 import type { ServiceAccount } from 'firebase-admin/app';
 
+import { extractBipbotTargetBranch } from './bipbot-branch.js';
 import { BIPBOT_INGRESS_POLL_INTERVAL } from './config.js';
 import { logger } from './logger.js';
 
@@ -10,6 +11,7 @@ export interface BipbotIngressEvent {
   jobId: string;
   issueId: string;
   issueUrl: string;
+  branch: string | null;
   prompt: string;
   sourceType: string;
   actor?: Record<string, unknown>;
@@ -97,12 +99,18 @@ export async function startBipbotIngressPoller(
           if (!claimed) continue;
 
           const data = doc.data();
+          const prompt = String(data.prompt || '');
+          const explicitBranch =
+            typeof data.branch === 'string' && data.branch.trim()
+              ? data.branch.trim()
+              : null;
           const event: BipbotIngressEvent = {
             docId: doc.id,
             jobId: String(data.jobId || doc.id),
             issueId: String(data.issueId || doc.id),
             issueUrl: String(data.issueUrl || ''),
-            prompt: String(data.prompt || ''),
+            branch: explicitBranch || extractBipbotTargetBranch(prompt),
+            prompt,
             sourceType: String(data.sourceType || 'bipbot'),
             actor:
               data.actor && typeof data.actor === 'object'

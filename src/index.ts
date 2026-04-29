@@ -33,6 +33,8 @@ import {
 } from './container-runner.js';
 import { startAutoCheckInLoop } from './checkin-engine.js';
 import { startCoachHttpServer } from './coach-http.js';
+import { startArccosSyncLoop } from './arccos-sync.js';
+import { startSelfUnderstandingReportsLoop } from './report-sync.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
@@ -165,7 +167,7 @@ function saveState(): void {
 }
 
 function getEffectiveSender(
-  chatJid: string,
+  _chatJid: string,
   messages: NewMessage[],
   requiresTrigger: boolean,
 ): NewMessage | undefined {
@@ -220,7 +222,7 @@ function buildAgentPrompt(
     'operator-safe':
       'You may help with business and content workflows, but do not do coding, git, PR, or code-edit workflows.',
     'gateway-system':
-      'Treat this as a narrow machine-to-machine workflow. You may inspect the designated repository, assess issues, and hand off implementation through BipBot gateway jobs/comments, but do not push, open PRs, or do unrelated coding work directly.',
+      'Treat this as a narrow machine-to-machine workflow. You may inspect the designated repository, assess issues, and hand off implementation through BipBot gateway jobs/comments, but do not push, open PRs, or do unrelated coding work directly. If an issue or ingress message names a target branch, inspect that branch before assessing file/code presence and use the same branch for downstream jobs.',
     'chat-only':
       'Keep this conversational only. Do not start operational, coding, or automation workflows.',
   };
@@ -712,6 +714,7 @@ function ensureContainerSystemRunning(): void {
 function queueBipbotIngressMessage(event: {
   issueId: string;
   issueUrl: string;
+  branch: string | null;
   prompt: string;
   sourceType: string;
 }): void {
@@ -735,7 +738,11 @@ function queueBipbotIngressMessage(event: {
     `${prefix}[BipBot ingress]`,
     `Issue: ${event.issueId}`,
     event.issueUrl ? `URL: ${event.issueUrl}` : '',
+    event.branch ? `Target branch: ${event.branch}` : '',
     event.sourceType ? `Source: ${event.sourceType}` : '',
+    event.branch
+      ? `Branch discipline: inspect and queue downstream work against \`${event.branch}\`; do not validate against \`main\` unless the issue explicitly targets \`main\`.`
+      : '',
     '',
     event.prompt,
   ]
@@ -910,6 +917,8 @@ async function main(): Promise<void> {
       coachServer = await startCoachHttpServer({ continueOnPortInUse: true });
       if (coachServer) {
         startAutoCheckInLoop(sendTelegramMirrorMessage);
+        startSelfUnderstandingReportsLoop();
+        startArccosSyncLoop();
       }
     }
   }

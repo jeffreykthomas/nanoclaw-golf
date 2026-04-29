@@ -8,6 +8,7 @@ import {
   ASSISTANT_NAME,
   CLAW_SIBLING_TOKEN,
   COACH_FIRST_RESULT_TIMEOUT,
+  DATA_DIR,
 } from './config.js';
 import { runContainerAgent } from './container-runner.js';
 import { getSession, setSession } from './db.js';
@@ -17,7 +18,9 @@ import { formatOutbound } from './router.js';
 import { RegisteredGroup } from './types.js';
 
 const LearningTaskSchema = z.enum([
+  'research_node',
   'discover_sources',
+  'summarize_source',
   'compile_node',
   'answer_question',
   'rebalance_node',
@@ -41,9 +44,11 @@ const LearningSourcePayloadSchema = z.object({
   publicationName: z.string().optional(),
   authorName: z.string().optional(),
   publishedOn: z.string().optional(),
+  whyRelevant: z.string().optional(),
   summaryMarkdown: z.string().optional(),
   extractedContent: z.string().optional(),
   citationLabel: z.string().optional(),
+  keyPoints: z.array(z.string()).default([]),
 });
 
 const LearningChildPayloadSchema = z.object({
@@ -122,6 +127,16 @@ function ensureAuthorized(
 async function parseJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const raw = await readBody(req);
   return JSON.parse(raw);
+}
+
+function writeLearningIpcClose(groupFolder: string): void {
+  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+  try {
+    fs.mkdirSync(inputDir, { recursive: true });
+    fs.writeFileSync(path.join(inputDir, '_close'), '');
+  } catch {
+    /* ignore */
+  }
 }
 
 function getLearningGroup(
@@ -217,10 +232,16 @@ function writeLearningWorkspaceFiles(
       `- publication_name: ${source.publicationName || 'N/A'}`,
       `- author_name: ${source.authorName || 'N/A'}`,
       `- published_on: ${source.publishedOn || 'N/A'}`,
+      `- why_relevant: ${source.whyRelevant || 'N/A'}`,
       `- citation_label: ${source.citationLabel || 'N/A'}`,
       '',
       '## Summary',
       source.summaryMarkdown || 'No summary yet.',
+      '',
+      '## Key Points',
+      source.keyPoints.length > 0
+        ? source.keyPoints.map((point) => `- ${point}`).join('\n')
+        : 'No key points yet.',
       '',
       '## Extracted Content',
       source.extractedContent || 'No extracted content available.',
@@ -282,6 +303,37 @@ export function buildLearningPrompt(req: LearningRequest): string {
   ].join('\n');
 
   switch (req.taskType) {
+    case 'research_node':
+      return [
+        sharedContext,
+        '',
+        'Research this topic end-to-end using the web and the current workspace context.',
+        'Find a small set of strong sources, summarize each one, and then compile the topic into an organizing note.',
+        'Prefer fewer high-quality sources over many weak ones.',
+        'Use an Obsidian-like note structure and a gbrain-like pattern of current understanding plus evidence trail.',
+        '',
+        'Return JSON:',
+        '{',
+        '  "sources": [',
+        '    {',
+        '      "title": "Source title",',
+        '      "url": "https://example.com",',
+        '      "publication_name": "Publisher",',
+        '      "author_name": "Author",',
+        '      "published_on": "YYYY-MM-DD or null",',
+        '      "quality_score": 1,',
+        '      "why_relevant": "Why this source matters",',
+        '      "summary_markdown": "Markdown source summary",',
+        '      "key_points": ["point one", "point two"]',
+        '    }',
+        '  ],',
+        '  "summary": "2-3 sentence topic summary",',
+        '  "body_markdown": "Markdown note",',
+        '  "child_topics": [{ "title": "Subtopic", "summary": "Why it matters" }],',
+        '  "related_topics": ["Existing Topic"],',
+        '  "open_questions": ["Question"]',
+        '}',
+      ].join('\n');
     case 'discover_sources':
       return [
         sharedContext,
@@ -303,6 +355,21 @@ export function buildLearningPrompt(req: LearningRequest): string {
         '      "why_relevant": "Why this is worth reading"',
         '    }',
         '  ]',
+        '}',
+      ].join('\n');
+    case 'summarize_source':
+      return [
+        sharedContext,
+        '',
+        'Summarize the source material currently present in /workspace/group/sources/.',
+        'If extracted content is present, prioritize that. Otherwise use the source metadata and URL to understand the source.',
+        'Be concise but high-signal.',
+        '',
+        'Return JSON:',
+        '{',
+        '  "title": "Cleaned source title",',
+        '  "summary_markdown": "Markdown summary",',
+        '  "key_points": ["point one", "point two", "point three"]',
         '}',
       ].join('\n');
     case 'compile_node':
@@ -460,6 +527,7 @@ export async function handleLearningRequest(
           if (!payload) return;
 
           firstResultResolved = true;
+          writeLearningIpcClose(group.folder);
           resolveFirstResult({
             payload,
             rawText: formatOutbound(rawText),
@@ -471,10 +539,10 @@ export async function handleLearningRequest(
       },
     );
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error('first_result_timeout')),
-        COACH_FIRST_RESULT_TIMEOUT,
-      ).unref();
+      setTimeout(() => {
+        writeLearningIpcClose(group.folder);
+        reject(new Error('first_result_timeout'));
+      }, COACH_FIRST_RESULT_TIMEOUT).unref();
     });
 
     outputPromise
@@ -484,12 +552,14 @@ export async function handleLearningRequest(
         }
 
         if (firstResultResolved || !rejectFirstResult) return;
+        writeLearningIpcClose(group.folder);
         rejectFirstResult(
           new Error(output.error || 'structured_payload_parse_failed'),
         );
       })
       .catch((error) => {
         if (firstResultResolved || !rejectFirstResult) return;
+        writeLearningIpcClose(group.folder);
         rejectFirstResult(
           error instanceof Error ? error : new Error(String(error)),
         );

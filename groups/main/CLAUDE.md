@@ -77,6 +77,14 @@ Standard Markdown: `**bold**`, `*italic*`, `[links](url)`, `# headings`.
 
 This is the **main channel**, which has elevated privileges.
 
+## BipBot Branch Discipline
+
+For BipBot ingress issues and daily code-sweep work:
+
+- Treat `!develop`, `!staging`, and explicit "on the `branch` branch" instructions as authoritative.
+- Use that branch for any repository inspection and for downstream `bipbot_create_codex_job` requests.
+- Do not compare against `main` or tell downstream coding agents to check `main` unless the issue explicitly targets `main`.
+
 ## Authentication
 
 Anthropic credentials must be either an API key from console.anthropic.com (`ANTHROPIC_API_KEY`) or a long-lived OAuth token from `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`). Short-lived tokens from the system keychain or `~/.claude/.credentials.json` expire within hours and can cause recurring container 401s. The `/setup` skill walks through this. OneCLI manages credentials (including Anthropic auth) — run `onecli --help`.

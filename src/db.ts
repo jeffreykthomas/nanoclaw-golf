@@ -752,15 +752,32 @@ export interface CheckInMessage {
 }
 
 export function storeCheckInMessage(userId: string, message: string): number {
+  const now = new Date().toISOString();
+  clearPendingCheckInMessages(userId, now);
+
   const result = db
     .prepare(
       `INSERT INTO checkin_messages (user_id, message, created_at) VALUES (?, ?, ?)`,
     )
-    .run(userId, message, new Date().toISOString());
+    .run(userId, message, now);
   return result.lastInsertRowid as number;
 }
 
+export function clearPendingCheckInMessages(
+  userId: string,
+  at = new Date().toISOString(),
+): void {
+  db.prepare(
+    `UPDATE checkin_messages
+     SET delivered_at = ?
+     WHERE user_id = ? AND delivered_at IS NULL`,
+  ).run(at, userId);
+}
+
 export function getPendingCheckInMessages(userId: string): CheckInMessage[] {
+  clearCheckInsOlderThanLatestInteraction(userId);
+  keepOnlyLatestPendingCheckIn(userId);
+
   return db
     .prepare(
       `SELECT id, user_id, message, created_at, delivered_at
@@ -769,6 +786,36 @@ export function getPendingCheckInMessages(userId: string): CheckInMessage[] {
        ORDER BY created_at`,
     )
     .all(userId) as CheckInMessage[];
+}
+
+function clearCheckInsOlderThanLatestInteraction(userId: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE checkin_messages
+     SET delivered_at = ?
+     WHERE user_id = ?
+       AND delivered_at IS NULL
+       AND created_at < COALESCE(
+         (SELECT last_interaction_at FROM user_profile_index WHERE user_id = ?),
+         ''
+       )`,
+  ).run(now, userId, userId);
+}
+
+function keepOnlyLatestPendingCheckIn(userId: string): void {
+  const rows = db
+    .prepare(
+      `SELECT id
+       FROM checkin_messages
+       WHERE user_id = ? AND delivered_at IS NULL
+       ORDER BY created_at DESC`,
+    )
+    .all(userId) as Array<{ id: number }>;
+
+  const superseded = rows.slice(1).map((row) => row.id);
+  if (superseded.length > 0) {
+    markCheckInMessagesDelivered(superseded);
+  }
 }
 
 export function markCheckInMessagesDelivered(ids: number[]): void {

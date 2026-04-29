@@ -85,7 +85,11 @@ export class BipbotGatewayClient {
 
   async createCodexJob(payload: Record<string, unknown>): Promise<void> {
     const issueId = String(payload.issueId || 'unknown');
-    await this.post('createCodexJob', payload, `job-${issueId}-${Date.now()}`);
+    const requestId =
+      typeof payload.jobId === 'string' && payload.jobId.trim()
+        ? payload.jobId.trim()
+        : `job-${issueId}-${Date.now()}`;
+    await this.post('createCodexJob', payload, requestId);
   }
 
   async upsertProposal(payload: Record<string, unknown>): Promise<void> {

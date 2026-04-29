@@ -358,8 +358,8 @@ def main():
         "isMain": is_main,
         "secrets": secrets,
     }
-    if group_name:
-        payload["groupFolder"] = group_name
+    if group_folder:
+        payload["groupFolder"] = group_folder
     if args.session:
         payload["sessionId"] = args.session
         payload["resumeAt"] = "latest"

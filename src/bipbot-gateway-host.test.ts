@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -9,6 +10,10 @@ const gatewayMocks = vi.hoisted(() => ({
   enqueueLinearComment: vi.fn(),
   upsertProposal: vi.fn(),
   recordDecision: vi.fn(),
+}));
+
+const childProcessMocks = vi.hoisted(() => ({
+  execFile: vi.fn(),
 }));
 
 vi.mock('./config.js', () => ({
@@ -24,6 +29,10 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+vi.mock('child_process', () => ({
+  execFile: childProcessMocks.execFile,
+}));
+
 vi.mock('./bipbot-gateway-client.js', () => ({
   BipbotGatewayClient: class MockBipbotGatewayClient {
     createCodexJob = gatewayMocks.createCodexJob;
@@ -35,6 +44,29 @@ vi.mock('./bipbot-gateway-client.js', () => ({
 
 import { handleBipbotGatewayIpc } from './bipbot-gateway-host.js';
 
+function expectedJobId(params: {
+  issueId: string;
+  repoUrl: string;
+  branch: string;
+  prompt: string;
+  agent: 'codex' | 'claude';
+}): string {
+  const fingerprint = createHash('sha1')
+    .update(
+      [
+        params.issueId.trim().toLowerCase(),
+        params.repoUrl.trim(),
+        params.branch.trim(),
+        params.agent,
+        params.prompt.replace(/\s+/g, ' ').trim(),
+      ].join('|'),
+    )
+    .digest('hex')
+    .slice(0, 16);
+
+  return `job-${params.issueId}-${fingerprint}`;
+}
+
 describe('handleBipbotGatewayIpc', () => {
   let tempDir: string;
 
@@ -45,6 +77,9 @@ describe('handleBipbotGatewayIpc', () => {
     gatewayMocks.enqueueLinearComment.mockResolvedValue(undefined);
     gatewayMocks.upsertProposal.mockResolvedValue(undefined);
     gatewayMocks.recordDecision.mockResolvedValue(undefined);
+    childProcessMocks.execFile.mockImplementation((_file, _args, callback) => {
+      callback(null, '[]', '');
+    });
   });
 
   afterEach(() => {
@@ -71,7 +106,13 @@ describe('handleBipbotGatewayIpc', () => {
     expect(handled).toBe(true);
     expect(gatewayMocks.createCodexJob).toHaveBeenCalledWith(
       expect.objectContaining({
-        jobId: 'job-BIP-123-v2',
+        jobId: expectedJobId({
+          issueId: 'BIP-123',
+          repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+          branch: 'main',
+          prompt: 'Implement the approved fix.',
+          agent: 'codex',
+        }),
         issueId: 'BIP-123',
         version: 2,
         repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
@@ -123,6 +164,113 @@ describe('handleBipbotGatewayIpc', () => {
     );
     expect(JSON.parse(fs.readFileSync(resultPath, 'utf-8'))).toMatchObject({
       success: false,
+    });
+  });
+
+  it('reuses the same job id for equivalent prompts', async () => {
+    await handleBipbotGatewayIpc(
+      {
+        type: 'bipbot_create_codex_job',
+        requestId: 'req-3',
+        issueId: 'BIP-125',
+        version: 1,
+        repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+        branch: 'main',
+        prompt: 'Implement the approved fix.',
+        agent: 'codex',
+      },
+      'telegram_bipbot',
+      false,
+      tempDir,
+    );
+
+    await handleBipbotGatewayIpc(
+      {
+        type: 'bipbot_create_codex_job',
+        requestId: 'req-4',
+        issueId: 'BIP-125',
+        version: 2,
+        repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+        branch: 'main',
+        prompt: '  Implement   the approved fix.  ',
+        agent: 'codex',
+      },
+      'telegram_bipbot',
+      false,
+      tempDir,
+    );
+
+    expect(gatewayMocks.createCodexJob).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        jobId: expectedJobId({
+          issueId: 'BIP-125',
+          repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+          branch: 'main',
+          prompt: 'Implement the approved fix.',
+          agent: 'codex',
+        }),
+      }),
+    );
+    expect(gatewayMocks.createCodexJob).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        jobId: expectedJobId({
+          issueId: 'BIP-125',
+          repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+          branch: 'main',
+          prompt: 'Implement the approved fix.',
+          agent: 'codex',
+        }),
+      }),
+    );
+  });
+
+  it('skips queueing when an open pull request already exists', async () => {
+    childProcessMocks.execFile.mockImplementation((_file, _args, callback) => {
+      callback(
+        null,
+        JSON.stringify([
+          {
+            number: 351,
+            title: 'Codex: Quiet stale welcome client ID errors',
+            url: 'https://github.com/jeffreykthomas/bip-bot/pull/351',
+          },
+        ]),
+        '',
+      );
+    });
+
+    const handled = await handleBipbotGatewayIpc(
+      {
+        type: 'bipbot_create_codex_job',
+        requestId: 'req-5',
+        issueId: 'BIP-123',
+        version: 3,
+        repoUrl: 'https://github.com/jeffreykthomas/bip-bot.git',
+        branch: 'main',
+        prompt: 'Implement the approved fix.',
+        agent: 'codex',
+      },
+      'telegram_bipbot',
+      false,
+      tempDir,
+    );
+
+    expect(handled).toBe(true);
+    expect(gatewayMocks.createCodexJob).not.toHaveBeenCalled();
+
+    const resultPath = path.join(
+      tempDir,
+      'ipc',
+      'telegram_bipbot',
+      'bipbot_results',
+      'req-5.json',
+    );
+    expect(JSON.parse(fs.readFileSync(resultPath, 'utf-8'))).toMatchObject({
+      success: true,
+      message:
+        'Skipped codex job for BIP-123; open PR already exists: https://github.com/jeffreykthomas/bip-bot/pull/351',
     });
   });
 });

@@ -12,7 +12,10 @@ import {
   storeCheckInMessage,
 } from './db.js';
 import { logger } from './logger.js';
-import { getLatestProfileSummary } from './profile/service.js';
+import {
+  getLatestCheckInContext,
+  getLatestProfileSummary,
+} from './profile/service.js';
 import { isTelegramMirrorEnabled } from './telegram-notifier.js';
 import type { UserProfileIndex } from './types.js';
 
@@ -103,6 +106,7 @@ export function evaluateCheckInOpportunity(
 
 export function buildCheckInMessage(params: {
   summary?: string | null;
+  recentContext?: string | null;
   urgency: 'gentle' | 'firm';
 }): string {
   const summaryLine = params.summary
@@ -113,9 +117,11 @@ export function buildCheckInMessage(params: {
       ? 'Quick check-in from your golf coach and life coach: it has been a while since we last talked.'
       : 'Quick check-in from your golf coach and life coach.';
 
-  const guidance = summaryLine
-    ? `Last profile note: ${summaryLine}`
-    : 'Send me a quick update on golf, energy, priorities, or anything you want coaching on.';
+  const guidance = params.recentContext?.trim()
+    ? `Recent context I have:\n${params.recentContext.trim()}`
+    : summaryLine
+      ? `Last profile note: ${summaryLine}`
+      : 'Send me a quick update on golf, energy, priorities, or anything you want coaching on.';
 
   return `${opener}\n\n${guidance}\n\nIf helpful, reply with a quick note about your game, your day, or what feels most important right now.`;
 }
@@ -139,9 +145,13 @@ export function startAutoCheckInLoop(
         const decision = evaluateCheckInOpportunity(profile);
         if (!decision.shouldSend) continue;
 
-        const summary = await getLatestProfileSummary(profile.user_id);
+        const [summary, recentContext] = await Promise.all([
+          getLatestProfileSummary(profile.user_id),
+          getLatestCheckInContext(profile.user_id),
+        ]);
         const message = buildCheckInMessage({
           summary,
+          recentContext,
           urgency: decision.urgency,
         });
         storeCheckInMessage(profile.user_id, message);

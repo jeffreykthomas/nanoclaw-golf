@@ -57,7 +57,7 @@ server.tool(
       'operator-safe':
         'operator-safe: business/content workflows are allowed, but coding, git, PR, and codebase-edit workflows are not.',
       'gateway-system':
-        'gateway-system: machine-driven workflow. You may inspect the designated repository and queue contract-backed gateway actions like codexJobs/comments, but do not push or open PRs directly.',
+        'gateway-system: machine-driven workflow. You may inspect the designated repository and queue contract-backed gateway actions like codexJobs/comments, but do not push or open PRs directly. If the issue names a target branch, inspect that branch before assessing file/code presence and use the same branch for downstream jobs.',
       'chat-only':
         'chat-only: conversational help only. Do not start operational, coding, or automation workflows.',
     } as const;

@@ -172,6 +172,7 @@ function buildPrompt(params: {
     'Only fill fields that are clearly supported by the evidence.',
     'If a field is unknown, ambiguous, or only weakly implied, leave it as null.',
     'Preserve existing values unless the new evidence clearly refines them.',
+    'For current goals, deadlines, "this weekend", "today", and other time-relative claims, reconcile against evidence dates. If newer evidence shows the event has happened, remove or replace the stale future-tense item.',
     'Golf is first-class: keep the golf_game_coaching_profile category up to date whenever evidence supports it.',
     'Never invent medical diagnoses, trauma narratives, or sensitive secrets without explicit evidence.',
     '',

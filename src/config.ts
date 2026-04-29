@@ -30,6 +30,18 @@ const coachEnvConfig = readEnvFile([
   'BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH',
   'BIPBOT_INGRESS_POLL_INTERVAL',
   'BIPBOT_INGRESS_CHAT_JID',
+  'AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED',
+  'SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS',
+  'SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT',
+  'SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS',
+  'AUTO_ARCCOS_SYNC_ENABLED',
+  'ARCCOS_SYNC_LOOP_INTERVAL_MS',
+  'ARCCOS_SYNC_BATCH_LIMIT',
+  'ARCCOS_SYNC_ALLOWED_HOURS',
+  'ARCCOS_SYNC_ALLOWED_WEEKDAYS',
+  'ARCCOS_SYNC_CUTOFF_MONTHS',
+  'ARCCOS_SYNC_MAX_ROUNDS',
+  'ARCCOS_SYNC_TIMEOUT_MS',
 ]);
 
 export const ASSISTANT_NAME =
@@ -191,3 +203,95 @@ export const BIPBOT_INGRESS_CHAT_JID =
   process.env.BIPBOT_INGRESS_CHAT_JID ||
   coachEnvConfig.BIPBOT_INGRESS_CHAT_JID ||
   '';
+
+export const AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED =
+  (process.env.AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED ||
+    coachEnvConfig.AUTO_SELF_UNDERSTANDING_REPORTS_ENABLED ||
+    'false') === 'true';
+export const SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS = parseInt(
+  process.env.SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS ||
+    coachEnvConfig.SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS ||
+    '3600000',
+  10,
+);
+export const SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT = parseInt(
+  process.env.SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT ||
+    coachEnvConfig.SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT ||
+    '5',
+  10,
+);
+export const SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS = (
+  process.env.SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS ||
+  coachEnvConfig.SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS ||
+  '2'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+
+// ---------------- Arccos sync ----------------
+
+export const AUTO_ARCCOS_SYNC_ENABLED =
+  (process.env.AUTO_ARCCOS_SYNC_ENABLED ||
+    coachEnvConfig.AUTO_ARCCOS_SYNC_ENABLED ||
+    'false') === 'true';
+
+// Default: check once per hour; real work only happens if a user is due for a
+// weekly sync (gated by Rails `stale_after`).
+export const ARCCOS_SYNC_LOOP_INTERVAL_MS = parseInt(
+  process.env.ARCCOS_SYNC_LOOP_INTERVAL_MS ||
+    coachEnvConfig.ARCCOS_SYNC_LOOP_INTERVAL_MS ||
+    '3600000',
+  10,
+);
+
+export const ARCCOS_SYNC_BATCH_LIMIT = parseInt(
+  process.env.ARCCOS_SYNC_BATCH_LIMIT ||
+    coachEnvConfig.ARCCOS_SYNC_BATCH_LIMIT ||
+    '3',
+  10,
+);
+
+// Hour-of-day gating (local timezone). Default: 3 AM.
+export const ARCCOS_SYNC_ALLOWED_HOURS = (
+  process.env.ARCCOS_SYNC_ALLOWED_HOURS ||
+  coachEnvConfig.ARCCOS_SYNC_ALLOWED_HOURS ||
+  '3'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+
+// Day-of-week gating (0=Sun..6=Sat). Default: Monday only → truly weekly.
+export const ARCCOS_SYNC_ALLOWED_WEEKDAYS = (
+  process.env.ARCCOS_SYNC_ALLOWED_WEEKDAYS ||
+  coachEnvConfig.ARCCOS_SYNC_ALLOWED_WEEKDAYS ||
+  '1'
+)
+  .split(',')
+  .map((value) => parseInt(value.trim(), 10))
+  .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6);
+
+export const ARCCOS_SYNC_CUTOFF_MONTHS = parseInt(
+  process.env.ARCCOS_SYNC_CUTOFF_MONTHS ||
+    coachEnvConfig.ARCCOS_SYNC_CUTOFF_MONTHS ||
+    '6',
+  10,
+);
+
+export const ARCCOS_SYNC_MAX_ROUNDS = parseInt(
+  process.env.ARCCOS_SYNC_MAX_ROUNDS ||
+    coachEnvConfig.ARCCOS_SYNC_MAX_ROUNDS ||
+    '150',
+  10,
+);
+
+// Agent runtime cap per user (ms). API phase: 1-3 min. SG scrape (Phase B):
+// 2-5 min across 4-6 pages. 15 min ceiling covers a first run with expired
+// access key (forcing a full browser login + SG scrape).
+export const ARCCOS_SYNC_TIMEOUT_MS = parseInt(
+  process.env.ARCCOS_SYNC_TIMEOUT_MS ||
+    coachEnvConfig.ARCCOS_SYNC_TIMEOUT_MS ||
+    '900000',
+  10,
+);

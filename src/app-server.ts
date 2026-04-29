@@ -14,6 +14,7 @@ import {
 } from './container-runtime.js';
 import { initDatabase } from './db.js';
 import { logger } from './logger.js';
+import { startSelfUnderstandingReportsLoop } from './report-sync.js';
 import { sendTelegramMirrorMessage } from './telegram-notifier.js';
 
 export { buildPrompt } from './coach-http.js';
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
 
   const server = await startCoachHttpServer();
   startAutoCheckInLoop(sendTelegramMirrorMessage);
+  startSelfUnderstandingReportsLoop();
 
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
