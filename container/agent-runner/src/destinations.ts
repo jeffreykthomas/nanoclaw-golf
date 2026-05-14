@@ -98,7 +98,9 @@ function buildDestinationsSection(): string {
     return [
       '## Sending messages',
       '',
-      'You currently have no configured destinations. You cannot send messages until an admin wires one up.',
+      'Reply to the current conversation by writing your final response directly.',
+      '',
+      'Do not use the `send_message` MCP tool for normal replies; it is only for named/proactive destinations after an admin wires one up.',
     ].join('\n');
   }
 

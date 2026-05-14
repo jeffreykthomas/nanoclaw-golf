@@ -6,6 +6,7 @@ import {
   BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH,
   BIPBOT_INGRESS_AGENT_FOLDER,
   BIPBOT_INGRESS_AGENT_NAME,
+  BIPBOT_REPO_URL,
   CLAW_SIBLING_TOKEN,
   DATA_DIR,
   ENABLE_COACH_AGENT,
@@ -68,12 +69,15 @@ async function handleArccosSyncTrigger(req: http.IncomingMessage, res: http.Serv
 }
 
 function buildBipbotPrompt(event: BipbotIngressEvent): string {
+  const repoUrl = event.repoUrl || BIPBOT_REPO_URL;
   return [
     '[BipBot ingress]',
     `Issue: ${event.issueId}`,
     event.issueUrl ? `URL: ${event.issueUrl}` : '',
+    repoUrl ? `Repository: ${repoUrl}` : '',
     event.branch ? `Target branch: ${event.branch}` : '',
     event.sourceType ? `Source: ${event.sourceType}` : '',
+    'Workflow: evaluate this issue and, when implementation is warranted, queue the downstream work with `bipbot_create_codex_job`. Do not require a chat destination and do not open a PR directly.',
     event.branch
       ? `Branch discipline: inspect and queue downstream work against \`${event.branch}\`; do not validate against \`main\` unless the issue explicitly targets \`main\`.`
       : '',
@@ -149,6 +153,19 @@ export async function startAppHttpServer(options?: { continueOnPortInUse?: boole
   });
 }
 
+export async function startAppBridgeRuntime(): Promise<http.Server | null> {
+  const server = await startAppHttpServer({ continueOnPortInUse: true });
+  startSelfUnderstandingReportsLoop();
+  startArccosSyncLoop();
+  startAutoCheckInLoop(sendTelegramMirrorMessage);
+  if (BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH) {
+    await startBipbotIngressPoller(BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH, {
+      onIngressEvent: queueBipbotIngressTask,
+    });
+  }
+  return server;
+}
+
 async function main(): Promise<void> {
   if (!ENABLE_COACH_AGENT) {
     log.fatal('ENABLE_COACH_AGENT is not set to true. Exiting.');
@@ -165,15 +182,7 @@ async function main(): Promise<void> {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 
-  const server = await startAppHttpServer();
-  startSelfUnderstandingReportsLoop();
-  startArccosSyncLoop();
-  startAutoCheckInLoop(sendTelegramMirrorMessage);
-  if (BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH) {
-    await startBipbotIngressPoller(BIPBOT_FIREBASE_SERVICE_ACCOUNT_PATH, {
-      onIngressEvent: queueBipbotIngressTask,
-    });
-  }
+  const server = await startAppBridgeRuntime();
   const shutdown = (signal: string) => {
     log.info('Shutdown signal received', { signal });
     if (!server) {

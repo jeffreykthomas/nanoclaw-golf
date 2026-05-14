@@ -20,11 +20,7 @@ function pushFact(
   const evidence = params.evidence.trim();
   if (!fact || !evidence) return;
   facts.push({
-    id: makeFactId([
-      params.category,
-      fact.toLowerCase(),
-      evidence.toLowerCase(),
-    ]),
+    id: makeFactId([params.category, fact.toLowerCase(), evidence.toLowerCase()]),
     at: params.at,
     source: params.source,
     category: params.category,
@@ -83,38 +79,32 @@ function extractFromMessage(message: string, at: string): ProfileFact[] {
     },
     {
       category: 'goal',
-      regex:
-        /\b(i want to|i hope to|i'm trying to|i am trying to)\s+([^.,;!?\n]+)/i,
+      regex: /\b(i want to|i hope to|i'm trying to|i am trying to)\s+([^.,;!?\n]+)/i,
       prefix: '',
     },
     {
       category: 'value',
-      regex:
-        /\b(i value|what matters to me is|it is important to me to)\s+([^.,;!?\n]+)/i,
+      regex: /\b(i value|what matters to me is|it is important to me to)\s+([^.,;!?\n]+)/i,
       prefix: '',
     },
     {
       category: 'strength',
-      regex:
-        /\b(i am good at|i'm good at|my strength is|people rely on me for)\s+([^.,;!?\n]+)/i,
+      regex: /\b(i am good at|i'm good at|my strength is|people rely on me for)\s+([^.,;!?\n]+)/i,
       prefix: '',
     },
     {
       category: 'weakness',
-      regex:
-        /\b(i struggle with|i'm bad at|i am bad at|my weakness is)\s+([^.,;!?\n]+)/i,
+      regex: /\b(i struggle with|i'm bad at|i am bad at|my weakness is)\s+([^.,;!?\n]+)/i,
       prefix: '',
     },
     {
       category: 'constraint',
-      regex:
-        /\b(i can't|i cannot|i do not have time to|i don't have time to)\s+([^.,;!?\n]+)/i,
+      regex: /\b(i can't|i cannot|i do not have time to|i don't have time to)\s+([^.,;!?\n]+)/i,
       prefix: '',
     },
     {
       category: 'relationship',
-      regex:
-        /\b(i have|my)\s+([^.,;!?\n]*(wife|husband|partner|kids|children|dog|cat|family)[^.,;!?\n]*)/i,
+      regex: /\b(i have|my)\s+([^.,;!?\n]*(wife|husband|partner|kids|children|dog|cat|family)[^.,;!?\n]*)/i,
       prefix: '',
     },
     {
@@ -133,11 +123,7 @@ function extractFromMessage(message: string, at: string): ProfileFact[] {
     add(pattern.category, factText);
   }
 
-  if (
-    /\bgolf|round|driver|putter|wedge|handicap|tee shot|approach|short game|strokes gained\b/i.test(
-      lower,
-    )
-  ) {
+  if (/\bgolf|round|driver|putter|wedge|handicap|tee shot|approach|short game|strokes gained\b/i.test(lower)) {
     add('golf', lower.slice(0, 160));
   }
 
@@ -157,21 +143,12 @@ function extractFromMessage(message: string, at: string): ProfileFact[] {
 }
 
 function stringifyContextValue(value: unknown): string | null {
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
   if (Array.isArray(value)) {
     const scalars = value
-      .filter(
-        (item) =>
-          typeof item === 'string' ||
-          typeof item === 'number' ||
-          typeof item === 'boolean',
-      )
+      .filter((item) => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean')
       .map(String);
     return scalars.length > 0 ? scalars.join(', ') : null;
   }
@@ -180,27 +157,19 @@ function stringifyContextValue(value: unknown): string | null {
 
 function categoryForContextKey(key: string): ProfileFactCategory {
   const normalized = key.toLowerCase();
-  if (
-    /(golf|club|round|score|shot|swing|putt|course|handicap)/.test(normalized)
-  ) {
+  if (/(golf|club|round|score|shot|swing|putt|course|handicap)/.test(normalized)) {
     return 'golf';
   }
   if (/(goal|target|aim)/.test(normalized)) return 'goal';
   if (/(preference|like|dislike)/.test(normalized)) return 'preference';
-  if (/(strength|weakness)/.test(normalized))
-    return normalized.includes('weak') ? 'weakness' : 'strength';
+  if (/(strength|weakness)/.test(normalized)) return normalized.includes('weak') ? 'weakness' : 'strength';
   if (/(constraint|availability|injury|pain|mobility)/.test(normalized)) {
-    return normalized.includes('injury') || normalized.includes('pain')
-      ? 'health'
-      : 'constraint';
+    return normalized.includes('injury') || normalized.includes('pain') ? 'health' : 'constraint';
   }
   return 'other';
 }
 
-function extractFromContext(
-  context: Record<string, unknown>,
-  at: string,
-): ProfileFact[] {
+function extractFromContext(context: Record<string, unknown>, at: string): ProfileFact[] {
   const facts: ProfileFact[] = [];
   for (const [key, value] of Object.entries(context)) {
     const stringValue = stringifyContextValue(value);
@@ -222,10 +191,7 @@ export function extractProfileFacts(params: {
   at?: string;
 }): ProfileFact[] {
   const at = params.at ?? new Date().toISOString();
-  return dedupeFacts([
-    ...extractFromMessage(params.message, at),
-    ...extractFromContext(params.context, at),
-  ]);
+  return dedupeFacts([...extractFromMessage(params.message, at), ...extractFromContext(params.context, at)]);
 }
 
 export function dedupeFacts(facts: ProfileFact[]): ProfileFact[] {

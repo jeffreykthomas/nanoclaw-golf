@@ -39,6 +39,42 @@ function log(msg: string): void {
 
 const CWD = '/workspace/agent';
 
+function resolveMcpEnvValue(value: string): { value: string; missingVar?: string } {
+  const match = value.match(/^\$\{([A-Z0-9_]+)\}$/);
+  if (!match) return { value };
+
+  const envValue = process.env[match[1]];
+  if (envValue) return { value: envValue };
+  return { value: '', missingVar: match[1] };
+}
+
+function resolveConfiguredMcpServer(
+  name: string,
+  serverConfig: { command: string; args?: string[]; env?: Record<string, string> },
+): { command: string; args: string[]; env: Record<string, string> } | null {
+  const env: Record<string, string> = {};
+  const missingVars: string[] = [];
+
+  for (const [key, rawValue] of Object.entries(serverConfig.env ?? {})) {
+    const resolved = resolveMcpEnvValue(rawValue);
+    env[key] = resolved.value;
+    if (resolved.missingVar) {
+      missingVars.push(resolved.missingVar);
+    }
+  }
+
+  if (missingVars.length > 0) {
+    log(`Skipping MCP server ${name}; missing env: ${[...new Set(missingVars)].join(', ')}`);
+    return null;
+  }
+
+  return {
+    command: serverConfig.command,
+    args: serverConfig.args ?? [],
+    env,
+  };
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const providerName = config.provider.toLowerCase() as ProviderName;
@@ -82,8 +118,10 @@ async function main(): Promise<void> {
   };
 
   for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
-    mcpServers[name] = serverConfig;
-    log(`Additional MCP server: ${name} (${serverConfig.command})`);
+    const resolvedServerConfig = resolveConfiguredMcpServer(name, serverConfig);
+    if (!resolvedServerConfig) continue;
+    mcpServers[name] = resolvedServerConfig;
+    log(`Additional MCP server: ${name} (${resolvedServerConfig.command})`);
   }
 
   const provider = createProvider(providerName, {

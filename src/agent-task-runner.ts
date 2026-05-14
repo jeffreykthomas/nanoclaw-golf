@@ -2,6 +2,7 @@ import { createAgentGroup, getAgentGroupByFolder } from './db/agent-groups.js';
 import { getDueOutboundMessages } from './db/session-db.js';
 import { resolveSession, openOutboundDb, writeSessionMessage } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
+import { applyCoachPortalMcpConfig, ensureCoachPortalGuidance, isCoachPortalFolder } from './coach-portal-mcp.js';
 import { log } from './log.js';
 import type { AgentGroup, MessageOut } from './types.js';
 
@@ -85,6 +86,10 @@ async function waitForTaskOutput(
 
 export async function runAgentTask(options: AgentTaskOptions): Promise<AgentTaskResult> {
   const agentGroup = ensureAgentGroup(options.folder, options.name);
+  if (isCoachPortalFolder(agentGroup.folder)) {
+    applyCoachPortalMcpConfig(agentGroup.folder);
+    ensureCoachPortalGuidance(agentGroup.folder, options.name);
+  }
   const { session } = resolveSession(agentGroup.id, null, null, 'agent-shared');
   const messageId = makeId('task');
   const channelType = options.channelType ?? 'internal-task';

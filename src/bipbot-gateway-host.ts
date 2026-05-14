@@ -33,40 +33,23 @@ function getGatewayClient(): BipbotGatewayClient | null {
   return gatewayClient;
 }
 
-function writeResult(
-  dataDir: string,
-  sourceGroup: string,
-  requestId: string,
-  result: GatewayResult,
-): void {
+function writeResult(dataDir: string, sourceGroup: string, requestId: string, result: GatewayResult): void {
   const resultsDir = path.join(dataDir, 'ipc', sourceGroup, 'bipbot_results');
   fs.mkdirSync(resultsDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(resultsDir, `${requestId}.json`),
-    JSON.stringify(result),
-  );
+  fs.writeFileSync(path.join(resultsDir, `${requestId}.json`), JSON.stringify(result));
 }
 
-function getRequiredString(
-  data: Record<string, unknown>,
-  key: string,
-): string | null {
+function getRequiredString(data: Record<string, unknown>, key: string): string | null {
   const value = data[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function getOptionalString(
-  data: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function getOptionalString(data: Record<string, unknown>, key: string): string | undefined {
   const value = data[key];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function getRequiredNumber(
-  data: Record<string, unknown>,
-  key: string,
-): number | null {
+function getRequiredNumber(data: Record<string, unknown>, key: string): number | null {
   const value = data[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -104,23 +87,17 @@ function buildCodexJobId(params: {
 
 function parseGitHubRepo(repoUrl: string): string | null {
   const trimmed = repoUrl.trim();
-  const httpsMatch = trimmed.match(
-    /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
-  );
+  const httpsMatch = trimmed.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
   if (httpsMatch) {
     return `${httpsMatch[1]}/${httpsMatch[2]}`;
   }
 
-  const sshMatch = trimmed.match(
-    /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i,
-  );
+  const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
   if (sshMatch) {
     return `${sshMatch[1]}/${sshMatch[2]}`;
   }
 
-  const sshUrlMatch = trimmed.match(
-    /^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i,
-  );
+  const sshUrlMatch = trimmed.match(/^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
   if (sshUrlMatch) {
     return `${sshUrlMatch[1]}/${sshUrlMatch[2]}`;
   }
@@ -128,10 +105,7 @@ function parseGitHubRepo(repoUrl: string): string | null {
   return null;
 }
 
-async function findExistingOpenPullRequest(
-  repoUrl: string,
-  jobId: string,
-): Promise<ExistingPullRequest | null> {
+async function findExistingOpenPullRequest(repoUrl: string, jobId: string): Promise<ExistingPullRequest | null> {
   const repo = parseGitHubRepo(repoUrl);
   if (!repo) return null;
 
@@ -139,18 +113,7 @@ async function findExistingOpenPullRequest(
     const stdout = await new Promise<string>((resolve, reject) => {
       execFile(
         'gh',
-        [
-          'pr',
-          'list',
-          '--repo',
-          repo,
-          '--state',
-          'open',
-          '--search',
-          `"${jobId}"`,
-          '--json',
-          'number,title,url',
-        ],
+        ['pr', 'list', '--repo', repo, '--state', 'open', '--search', `"${jobId}"`, '--json', 'number,title,url'],
         (err, execStdout) => {
           if (err) {
             reject(err);
@@ -186,12 +149,7 @@ export async function handleBipbotGatewayIpc(
 
   const client = getGatewayClient();
   if (!client) {
-    writeResult(
-      dataDir,
-      sourceGroup,
-      requestId,
-      fail('BipBot gateway is not configured on the host.'),
-    );
+    writeResult(dataDir, sourceGroup, requestId, fail('BipBot gateway is not configured on the host.'));
     return true;
   }
 
@@ -212,9 +170,7 @@ export async function handleBipbotGatewayIpc(
           break;
         }
         if (agent !== 'codex' && agent !== 'claude') {
-          result = fail(
-            'Invalid agent for createCodexJob. Use "codex" or "claude".',
-          );
+          result = fail('Invalid agent for createCodexJob. Use "codex" or "claude".');
           break;
         }
         const claudeModel = getOptionalString(data, 'claudeModel');
@@ -225,10 +181,7 @@ export async function handleBipbotGatewayIpc(
           prompt,
           agent,
         });
-        const existingPullRequest = await findExistingOpenPullRequest(
-          repoUrl,
-          jobId,
-        );
+        const existingPullRequest = await findExistingOpenPullRequest(repoUrl, jobId);
         if (existingPullRequest) {
           result = {
             success: true,
@@ -258,9 +211,7 @@ export async function handleBipbotGatewayIpc(
         const issueId = getRequiredString(data, 'issueId');
         const body = getRequiredString(data, 'body');
         if (!issueId || !body) {
-          result = fail(
-            'Missing required fields for enqueueLinearComment. Need issueId and body.',
-          );
+          result = fail('Missing required fields for enqueueLinearComment. Need issueId and body.');
           break;
         }
         await client.enqueueLinearComment(issueId, body);
@@ -277,12 +228,7 @@ export async function handleBipbotGatewayIpc(
         const riskAssessment = getRequiredString(data, 'riskAssessment');
         const options = data.options;
         const conversationHistory = data.conversationHistory;
-        if (
-          !issueId ||
-          version === null ||
-          !riskAssessment ||
-          !Array.isArray(options)
-        ) {
+        if (!issueId || version === null || !riskAssessment || !Array.isArray(options)) {
           result = fail(
             'Missing required fields for upsertProposal. Need issueId, version, options, and riskAssessment.',
           );
@@ -294,9 +240,7 @@ export async function handleBipbotGatewayIpc(
           version,
           options,
           riskAssessment,
-          ...(Array.isArray(conversationHistory)
-            ? { conversationHistory }
-            : {}),
+          ...(Array.isArray(conversationHistory) ? { conversationHistory } : {}),
         });
         result = {
           success: true,
@@ -318,9 +262,7 @@ export async function handleBipbotGatewayIpc(
           break;
         }
         if (status !== 'approved' && status !== 'expired') {
-          result = fail(
-            'Invalid status for recordDecision. Use "approved" or "expired".',
-          );
+          result = fail('Invalid status for recordDecision. Use "approved" or "expired".');
           break;
         }
         await client.recordDecision({
@@ -342,9 +284,7 @@ export async function handleBipbotGatewayIpc(
         return false;
     }
   } catch (err) {
-    result = fail(
-      err instanceof Error ? err.message : 'Unknown BipBot gateway error.',
-    );
+    result = fail(err instanceof Error ? err.message : 'Unknown BipBot gateway error.');
   }
 
   writeResult(dataDir, sourceGroup, requestId, result);

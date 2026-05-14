@@ -5,6 +5,7 @@
 This is NanoClaw v2, a ground-up rewrite with breaking changes throughout. It cannot be merged into an existing v1 install. Attempting to resolve the conflicts by hand, run builds, or "fix" anything will corrupt the user's install and burn tokens for no result.
 
 **Do this instead:**
+
 1. Abort the merge: `git merge --abort` (or `git reset --hard ORIG_HEAD` if the merge already completed).
 2. Tell the user, verbatim: *"This is the v2 rewrite — it can't be merged into your existing install. Exit Claude Code (or open a separate terminal) and run `bash migrate-v2.sh` from the shell."*
 3. Wait for the user to confirm before doing anything else. Do not run the migration script yourself — it requires an interactive terminal and cannot be run from within Claude Code.
@@ -157,7 +158,7 @@ API keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway. 
 
 When the host first spawns a session for a new agent group, `container-runner.ts:385` calls `onecli.ensureAgent({ name, identifier })`. The OneCLI `POST /api/agents` endpoint creates the agent in **`selective`** secret mode — meaning **no secrets are assigned to it by default**, even if the secrets exist in the vault and have host patterns that would otherwise match.
 
-Symptom: container starts, the proxy + CA cert are wired correctly, but the agent gets `401 Unauthorized` (or similar) from APIs whose credentials *are* in the vault. The credential just isn't in this agent's allow-list.
+Symptom: container starts, the proxy + CA cert are wired correctly, but the agent gets `401 Unauthorized` (or similar) from APIs whose credentials _are_ in the vault. The credential just isn't in this agent's allow-list.
 
 The SDK does not expose `setSecretMode` — the only fix is the CLI (or the web UI at `http://127.0.0.1:10254`).
 
@@ -183,7 +184,7 @@ If you've just enabled `mode all`, no container restart is needed — the gatewa
 
 Approval-gating credentialed actions is a **two-sided** flow:
 
-- **Server-side** (OneCLI gateway): decides *when* to hold a request and emit a pending approval. As of `onecli@1.3.0`, the CLI does **not** expose this — `rules create --action` only accepts `block` or `rate_limit`, and `secrets create` has no approval flag. Approval policies must be configured via the OneCLI web UI at `http://127.0.0.1:10254`. If/when the CLI grows an `approve` action, this section needs updating.
+- **Server-side** (OneCLI gateway): decides _when_ to hold a request and emit a pending approval. As of `onecli@1.3.0`, the CLI does **not** expose this — `rules create --action` only accepts `block` or `rate_limit`, and `secrets create` has no approval flag. Approval policies must be configured via the OneCLI web UI at `http://127.0.0.1:10254`. If/when the CLI grows an `approve` action, this section needs updating.
 - **Host-side** (nanoclaw): receives pending approvals and routes them to a human. `src/modules/approvals/onecli-approvals.ts` registers a callback via `onecli.configureManualApproval(cb)` (long-polls `GET /api/approvals/pending`). The callback uses `pickApprover` + `pickApprovalDelivery` from `src/modules/approvals/primitive.ts` to DM an approver. Approvers are resolved from the `user_roles` table — preference order: scoped admins for the agent group → global admins → owners. There is no env var like `NANOCLAW_ADMIN_USER_IDS`; roles are persisted in the central DB only.
 
 If approvals are configured server-side but the host callback isn't running (or throws), every credentialed call hangs until the gateway times out. Conversely, if the gateway has no rule asking for approval, the host callback never fires regardless of how it's wired.
@@ -197,15 +198,15 @@ Four types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxono
 - **Operational skills** — instruction-only workflows (`/setup`, `/debug`, `/customize`, `/init-first-agent`, `/manage-channels`, `/init-onecli`, `/update-nanoclaw`).
 - **Container skills** — loaded inside agent containers at runtime (`container/skills/`: `onecli-gateway`, `welcome`, `self-customize`, `agent-browser`, `slack-formatting`).
 
-| Skill | When to Use |
-|-------|-------------|
-| `/setup` | First-time install, auth, service config |
+| Skill               | When to Use                                                                      |
+| ------------------- | -------------------------------------------------------------------------------- |
+| `/setup`            | First-time install, auth, service config                                         |
 | `/init-first-agent` | Bootstrap the first DM-wired agent (channel pick → identity → wire → welcome DM) |
-| `/manage-channels` | Wire channels to agent groups with isolation level decisions |
-| `/customize` | Adding channels, integrations, behavior changes |
-| `/debug` | Container issues, logs, troubleshooting |
-| `/update-nanoclaw` | Bring upstream updates into a customized install |
-| `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials |
+| `/manage-channels`  | Wire channels to agent groups with isolation level decisions                     |
+| `/customize`        | Adding channels, integrations, behavior changes                                  |
+| `/debug`            | Container issues, logs, troubleshooting                                          |
+| `/update-nanoclaw`  | Bring upstream updates into a customized install                                 |
+| `/init-onecli`      | Install OneCLI Agent Vault and migrate `.env` credentials                        |
 
 ## Contributing
 
@@ -241,11 +242,14 @@ cd container/agent-runner && bun test      # Container tests (bun:test)
 Container typecheck is a separate tsconfig — if you edit `container/agent-runner/src/`, run `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` from root (or `bun run typecheck` from `container/agent-runner/`).
 
 Service management:
+
+> **personal-golf install note:** This install re-labels the launchd plist to `com.personal-golf.nanoclaw-main` (the upstream template ships `com.nanoclaw`). Skills under `.claude/skills/**`, `docs/SPEC.md`, and `launchd/com.nanoclaw.plist` still reference the upstream label — that's intentional, so `update-nanoclaw` keeps merging cleanly. When following any upstream skill, mentally substitute `com.nanoclaw` → `com.personal-golf.nanoclaw-main`. Canonical labels for this install live in [TOOLS.md](TOOLS.md) under "Local Service Runbook".
+
 ```bash
-# macOS (launchd)
-launchctl load   ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
+# macOS (launchd) — see TOOLS.md "Local Service Runbook" for full label list
+launchctl load   ~/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist
+launchctl unload ~/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist
+npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main  # restart
 
 # Linux (systemd)
 systemctl --user start|stop|restart nanoclaw
@@ -255,10 +259,10 @@ systemctl --user start|stop|restart nanoclaw
 
 Check these first when something goes wrong:
 
-| What | Where |
-|------|-------|
-| Host logs | `logs/nanoclaw.error.log` first (delivery failures, crash-loop backoff, warnings), then `logs/nanoclaw.log` for the full routing chain |
-| Setup logs | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step: bootstrap, environment, container, onecli, mounts, service, etc.) |
+| What        | Where                                                                                                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host logs   | `logs/nanoclaw.error.log` first (delivery failures, crash-loop backoff, warnings), then `logs/nanoclaw.log` for the full routing chain                                              |
+| Setup logs  | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step: bootstrap, environment, container, onecli, mounts, service, etc.)                                                   |
 | Session DBs | `data/v2-sessions/<agent-group>/<session>/` — `inbound.db` (`messages_in`: did the message reach the container?), `outbound.db` (`messages_out`: did the agent produce a response?) |
 
 Note: container logs are lost after the container exits (`--rm` flag). If the agent silently failed inside the container, there's no persistent log to inspect.
@@ -268,6 +272,7 @@ Note: container logs are lost after the container exits (`--rm` flag). If the ag
 This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspace.yaml`. New package versions must exist on the npm registry for 3 days before pnpm will resolve them.
 
 **Rules — do not bypass without explicit human approval:**
+
 - **`minimumReleaseAgeExclude`**: Never add entries without human sign-off. If a package must bypass the release age gate, the human must approve and the entry must pin the exact version being excluded (e.g. `package@1.2.3`), never a range.
 - **`onlyBuiltDependencies`**: Never add packages to this list without human approval — build scripts execute arbitrary code during install.
 - **`pnpm install --frozen-lockfile`** should be used in CI, automation, and container builds. Never run bare `pnpm install` in those contexts.
@@ -317,7 +322,7 @@ grep -q '^INSTALL_CJK_FONTS=' .env && sed -i.bak 's/^INSTALL_CJK_FONTS=.*/INSTAL
 
 # Rebuild and restart so new sessions pick up the new image
 ./container/build.sh
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
+npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main   # macOS
 # systemctl --user restart nanoclaw                # Linux
 ```
 

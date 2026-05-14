@@ -25,6 +25,7 @@ const coachEnvConfig = readEnvFile([
   'BIPBOT_INGRESS_AGENT_FOLDER',
   'BIPBOT_INGRESS_AGENT_NAME',
   'BIPBOT_INGRESS_POLL_INTERVAL',
+  'BIPBOT_REPO_URL',
   'CHECKIN_ALLOWED_HOURS',
   'CHECKIN_LOOP_INTERVAL_MS',
   'CHECKIN_MIN_HOURS_SINCE_CHAT',
@@ -144,13 +145,17 @@ export const ARCCOS_SYNC_BATCH_LIMIT = parseInt(
   10,
 );
 export const ARCCOS_SYNC_ALLOWED_HOURS = (
-  process.env.ARCCOS_SYNC_ALLOWED_HOURS || coachEnvConfig.ARCCOS_SYNC_ALLOWED_HOURS || '3'
+  process.env.ARCCOS_SYNC_ALLOWED_HOURS ||
+  coachEnvConfig.ARCCOS_SYNC_ALLOWED_HOURS ||
+  '3'
 )
   .split(',')
   .map((value) => parseInt(value.trim(), 10))
   .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
 export const ARCCOS_SYNC_ALLOWED_WEEKDAYS = (
-  process.env.ARCCOS_SYNC_ALLOWED_WEEKDAYS || coachEnvConfig.ARCCOS_SYNC_ALLOWED_WEEKDAYS || '1'
+  process.env.ARCCOS_SYNC_ALLOWED_WEEKDAYS ||
+  coachEnvConfig.ARCCOS_SYNC_ALLOWED_WEEKDAYS ||
+  '1'
 )
   .split(',')
   .map((value) => parseInt(value.trim(), 10))
@@ -180,6 +185,8 @@ export const BIPBOT_INGRESS_AGENT_FOLDER =
   process.env.BIPBOT_INGRESS_AGENT_FOLDER || coachEnvConfig.BIPBOT_INGRESS_AGENT_FOLDER || 'bipbot';
 export const BIPBOT_INGRESS_AGENT_NAME =
   process.env.BIPBOT_INGRESS_AGENT_NAME || coachEnvConfig.BIPBOT_INGRESS_AGENT_NAME || 'BipBot';
+export const BIPBOT_REPO_URL =
+  process.env.BIPBOT_REPO_URL || coachEnvConfig.BIPBOT_REPO_URL || 'https://github.com/jeffreykthomas/bip-bot.git';
 
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || coachEnvConfig.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_MIRROR_CHAT_ID =
@@ -196,14 +203,10 @@ export const CHECKIN_MIN_HOURS_SINCE_CHAT = parseInt(
   10,
 );
 export const CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN = parseInt(
-  process.env.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN ||
-    coachEnvConfig.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN ||
-    '24',
+  process.env.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN || coachEnvConfig.CHECKIN_MIN_HOURS_SINCE_LAST_CHECKIN || '24',
   10,
 );
-export const CHECKIN_ALLOWED_HOURS = (
-  process.env.CHECKIN_ALLOWED_HOURS || coachEnvConfig.CHECKIN_ALLOWED_HOURS || '9'
-)
+export const CHECKIN_ALLOWED_HOURS = (process.env.CHECKIN_ALLOWED_HOURS || coachEnvConfig.CHECKIN_ALLOWED_HOURS || '9')
   .split(',')
   .map((value) => parseInt(value.trim(), 10))
   .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);

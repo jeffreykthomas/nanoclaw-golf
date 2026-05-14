@@ -24,9 +24,11 @@ import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
+import { COACH_PORTAL_ENV_VARS, isCoachPortalFolder } from './coach-portal-mcp.js';
 import { readEnvFile } from './env.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
@@ -49,6 +51,33 @@ import {
 import type { AgentGroup, Session } from './types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
+
+const MENTORS_AGENT_GROUP_ID = 'agent-telegram-mentors';
+const MENTORS_OPERATIONAL_ENV_VARS = [
+  'META_ADS_CREDENTIALS',
+  'GOOGLE_SERVICE_ACCOUNT_JSON',
+  'GOOGLE_IMPERSONATE_EMAIL',
+  'GOOGLE_DRIVE_WRITE_FOLDER_ID',
+  'GOOGLE_ADS_DEVELOPER_TOKEN',
+  'GOOGLE_ADS_CUSTOMER_ID',
+  'GOOGLE_ADS_LOGIN_CUSTOMER_ID',
+  'GA4_PROPERTY_ID',
+  'ELEVENLABS_API_KEY',
+];
+const COACH_AGENT_GROUP_ID = 'agent-coach-2';
+const COACH_DRIVE_ENV_VARS = [
+  { source: 'COACH_GOOGLE_SERVICE_ACCOUNT_JSON', target: 'GOOGLE_SERVICE_ACCOUNT_JSON' },
+  { source: 'COACH_GOOGLE_IMPERSONATE_EMAIL', target: 'GOOGLE_IMPERSONATE_EMAIL' },
+  { source: 'COACH_GOOGLE_DRIVE_WRITE_FOLDER_ID', target: 'GOOGLE_DRIVE_WRITE_FOLDER_ID' },
+];
+const BIPBOT_AGENT_GROUP_ID = 'agent-bipbot';
+const BIPBOT_CONTAINER_ENV_VARS = [
+  { source: 'BIPBOT_GOOGLE_SERVICE_ACCOUNT_JSON', target: 'GOOGLE_SERVICE_ACCOUNT_JSON' },
+  { source: 'BIPBOT_GOOGLE_IMPERSONATE_EMAIL', target: 'GOOGLE_IMPERSONATE_EMAIL' },
+  { source: 'BIPBOT_GOOGLE_DRIVE_WRITE_FOLDER_ID', target: 'GOOGLE_DRIVE_WRITE_FOLDER_ID' },
+  { source: 'LINEAR_API_KEY', target: 'LINEAR_API_KEY' },
+  { source: 'GITHUB_TOKEN', target: 'GITHUB_TOKEN' },
+];
 
 /** Active containers tracked by session ID. */
 const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
@@ -264,12 +293,17 @@ function buildMounts(
   const mounts: VolumeMount[] = [];
   const sessDir = sessionDir(agentGroup.id, session.id);
   const groupDir = path.resolve(GROUPS_DIR, agentGroup.folder);
+  const groupIpcDir = resolveGroupIpcPath(agentGroup.folder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
 
   // Session folder at /workspace (contains inbound.db, outbound.db, outbox/, .claude/)
   mounts.push({ hostPath: sessDir, containerPath: '/workspace', readonly: false });
 
   // Agent group folder at /workspace/agent (RW for working files + CLAUDE.local.md)
   mounts.push({ hostPath: groupDir, containerPath: '/workspace/agent', readonly: false });
+
+  // Per-group host IPC used by tools that must keep secrets on the host.
+  mounts.push({ hostPath: groupIpcDir, containerPath: '/workspace/ipc', readonly: false });
 
   // container.json — nested RO mount on top of RW group dir so the agent
   // can read its config but cannot modify it.
@@ -417,10 +451,60 @@ async function buildContainerArgs(
     args.push('-e', `${key}=${value}`);
   }
 
+  if (agentGroup.id === MENTORS_AGENT_GROUP_ID) {
+    const mentorsEnvVars = readEnvFile(MENTORS_OPERATIONAL_ENV_VARS);
+    for (const key of MENTORS_OPERATIONAL_ENV_VARS) {
+      const value = process.env[key] || mentorsEnvVars[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+      }
+    }
+  }
+
+  if (agentGroup.id === COACH_AGENT_GROUP_ID) {
+    const coachEnvVars = readEnvFile(COACH_DRIVE_ENV_VARS.map(({ source }) => source));
+    for (const { source, target } of COACH_DRIVE_ENV_VARS) {
+      const value = process.env[source] || coachEnvVars[source];
+      if (value) {
+        args.push('-e', `${target}=${value}`);
+      }
+    }
+  }
+
+  if (isCoachPortalFolder(agentGroup.folder)) {
+    const coachPortalEnvVars = readEnvFile([...COACH_PORTAL_ENV_VARS]);
+    for (const key of COACH_PORTAL_ENV_VARS) {
+      const value = process.env[key] || coachPortalEnvVars[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+      }
+    }
+  }
+
+  if (agentGroup.id === BIPBOT_AGENT_GROUP_ID) {
+    const bipbotEnvVars = readEnvFile(BIPBOT_CONTAINER_ENV_VARS.map(({ source }) => source));
+    for (const { source, target } of BIPBOT_CONTAINER_ENV_VARS) {
+      const value = process.env[source] || bipbotEnvVars[source];
+      if (value) {
+        args.push('-e', `${target}=${value}`);
+      }
+    }
+  }
+
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {
     for (const [key, value] of Object.entries(providerContribution.env)) {
       args.push('-e', `${key}=${value}`);
+    }
+  }
+
+  if (provider === 'claude') {
+    const claudeEnvVars = readEnvFile(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+    for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) {
+      const value = process.env[key] || claudeEnvVars[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+      }
     }
   }
 

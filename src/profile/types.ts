@@ -27,10 +27,7 @@ export interface ProfileFieldMeta {
 }
 
 export type UserProfileInventory = Record<string, Record<string, unknown>>;
-export type UserProfileFieldMetadata = Record<
-  string,
-  Record<string, ProfileFieldMeta>
->;
+export type UserProfileFieldMetadata = Record<string, Record<string, ProfileFieldMeta>>;
 
 export type ProfileFactCategory =
   | 'identity'

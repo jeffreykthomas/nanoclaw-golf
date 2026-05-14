@@ -28,9 +28,7 @@ async function ensureDir(userId: string): Promise<void> {
   await fs.mkdir(userDir(userId), { recursive: true });
 }
 
-export async function loadUserProfileDocument(
-  userId: string,
-): Promise<UserProfileDocument | null> {
+export async function loadUserProfileDocument(userId: string): Promise<UserProfileDocument | null> {
   try {
     const raw = await fs.readFile(profilePath(userId), 'utf8');
     return JSON.parse(raw) as UserProfileDocument;
@@ -39,16 +37,9 @@ export async function loadUserProfileDocument(
   }
 }
 
-export async function writeUserProfileDocument(
-  userId: string,
-  profile: UserProfileDocument,
-): Promise<void> {
+export async function writeUserProfileDocument(userId: string, profile: UserProfileDocument): Promise<void> {
   await ensureDir(userId);
-  await fs.writeFile(
-    profilePath(userId),
-    `${JSON.stringify(profile, null, 2)}\n`,
-    'utf8',
-  );
+  await fs.writeFile(profilePath(userId), `${JSON.stringify(profile, null, 2)}\n`, 'utf8');
 }
 
 export async function listUserProfileDocuments(): Promise<UserProfileDocument[]> {
@@ -64,10 +55,7 @@ export async function listUserProfileDocuments(): Promise<UserProfileDocument[]>
   return profiles.filter((profile): profile is UserProfileDocument => profile !== null);
 }
 
-export async function loadProfileFacts(
-  userId: string,
-  limit?: number,
-): Promise<ProfileFact[]> {
+export async function loadProfileFacts(userId: string, limit?: number): Promise<ProfileFact[]> {
   try {
     const raw = await fs.readFile(factsPath(userId), 'utf8');
     const lines = raw
@@ -82,27 +70,19 @@ export async function loadProfileFacts(
   }
 }
 
-export async function appendProfileFacts(
-  userId: string,
-  facts: ProfileFact[],
-): Promise<void> {
+export async function appendProfileFacts(userId: string, facts: ProfileFact[]): Promise<void> {
   if (facts.length === 0) return;
   await ensureDir(userId);
   const payload = facts.map((fact) => JSON.stringify(fact)).join('\n');
   await fs.appendFile(factsPath(userId), `${payload}\n`, 'utf8');
 }
 
-export async function writeProfileReport(
-  userId: string,
-  report: string,
-): Promise<void> {
+export async function writeProfileReport(userId: string, report: string): Promise<void> {
   await ensureDir(userId);
   await fs.writeFile(reportPath(userId), report, 'utf8');
 }
 
-export async function readProfileReport(
-  userId: string,
-): Promise<string | null> {
+export async function readProfileReport(userId: string): Promise<string | null> {
   try {
     return await fs.readFile(reportPath(userId), 'utf8');
   } catch {
@@ -110,17 +90,12 @@ export async function readProfileReport(
   }
 }
 
-export async function writeCompactProfileSummary(
-  userId: string,
-  summary: string,
-): Promise<void> {
+export async function writeCompactProfileSummary(userId: string, summary: string): Promise<void> {
   await ensureDir(userId);
   await fs.writeFile(summaryPath(userId), summary, 'utf8');
 }
 
-export async function readCompactProfileSummary(
-  userId: string,
-): Promise<string | null> {
+export async function readCompactProfileSummary(userId: string): Promise<string | null> {
   try {
     return await fs.readFile(summaryPath(userId), 'utf8');
   } catch {

@@ -5,11 +5,7 @@ export interface BipbotGatewayClientOpts {
   token: string;
 }
 
-type GatewayAction =
-  | 'upsertProposal'
-  | 'recordDecision'
-  | 'createCodexJob'
-  | 'enqueueLinearComment';
+type GatewayAction = 'upsertProposal' | 'recordDecision' | 'createCodexJob' | 'enqueueLinearComment';
 
 export class BipbotGatewayClient {
   private baseUrl: string;
@@ -20,11 +16,7 @@ export class BipbotGatewayClient {
     this.token = opts.token;
   }
 
-  async post(
-    action: GatewayAction,
-    payload: Record<string, unknown>,
-    requestId: string,
-  ): Promise<void> {
+  async post(action: GatewayAction, payload: Record<string, unknown>, requestId: string): Promise<void> {
     const body = { action, requestId, payload };
     const delays = [1000, 2000, 4000];
 
@@ -55,9 +47,7 @@ export class BipbotGatewayClient {
           continue;
         }
 
-        throw new Error(
-          `BipBot gateway ${action} failed: ${response.status} ${responseBody}`,
-        );
+        throw new Error(`BipBot gateway ${action} failed: ${response.status} ${responseBody}`);
       } catch (err) {
         if (err instanceof TypeError && attempt < delays.length) {
           log.warn('BipBot gateway network error, retrying', { action, requestId, err, attempt });
@@ -70,37 +60,23 @@ export class BipbotGatewayClient {
   }
 
   async enqueueLinearComment(issueId: string, body: string): Promise<void> {
-    await this.post(
-      'enqueueLinearComment',
-      { issueId, body },
-      `comment-${issueId}-${Date.now()}`,
-    );
+    await this.post('enqueueLinearComment', { issueId, body }, `comment-${issueId}-${Date.now()}`);
   }
 
   async createCodexJob(payload: Record<string, unknown>): Promise<void> {
     const issueId = String(payload.issueId || 'unknown');
     const requestId =
-      typeof payload.jobId === 'string' && payload.jobId.trim()
-        ? payload.jobId.trim()
-        : `job-${issueId}-${Date.now()}`;
+      typeof payload.jobId === 'string' && payload.jobId.trim() ? payload.jobId.trim() : `job-${issueId}-${Date.now()}`;
     await this.post('createCodexJob', payload, requestId);
   }
 
   async upsertProposal(payload: Record<string, unknown>): Promise<void> {
     const issueId = String(payload.issueId || 'unknown');
-    await this.post(
-      'upsertProposal',
-      payload,
-      `proposal-${issueId}-${Date.now()}`,
-    );
+    await this.post('upsertProposal', payload, `proposal-${issueId}-${Date.now()}`);
   }
 
   async recordDecision(payload: Record<string, unknown>): Promise<void> {
     const issueId = String(payload.issueId || 'unknown');
-    await this.post(
-      'recordDecision',
-      payload,
-      `decision-${issueId}-${Date.now()}`,
-    );
+    await this.post('recordDecision', payload, `decision-${issueId}-${Date.now()}`);
   }
 }

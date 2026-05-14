@@ -7,7 +7,9 @@
 import path from 'path';
 
 import { backfillContainerConfigs } from './backfill-container-configs.js';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, ENABLE_COACH_AGENT } from './config.js';
+import { startAppBridgeRuntime } from './app-server.js';
+import { startBipbotGatewayIpcPoller, stopBipbotGatewayIpcPoller } from './bipbot-gateway-ipc.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { initDb } from './db/connection.js';
@@ -154,7 +156,7 @@ async function main(): Promise<void> {
       const adapter = getChannelAdapter(channelType);
       if (!adapter) {
         log.warn('No adapter for channel type', { channelType });
-        return;
+        throw new Error(`no_adapter_for_channel_type:${channelType}`);
       }
       return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
     },
@@ -176,6 +178,24 @@ async function main(): Promise<void> {
 
   // 7. Start the `ncl` CLI socket server (data/ncl.sock).
   await startCliServer();
+
+  // 8. Start golf bridge runtimes.
+  startBipbotGatewayIpcPoller();
+  onShutdown(() => {
+    stopBipbotGatewayIpcPoller();
+  });
+
+  if (ENABLE_COACH_AGENT) {
+    const appServer = await startAppBridgeRuntime();
+    if (appServer) {
+      onShutdown(
+        () =>
+          new Promise<void>((resolve) => {
+            appServer.close(() => resolve());
+          }),
+      );
+    }
+  }
 
   log.info('NanoClaw running');
 }

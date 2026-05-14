@@ -4,10 +4,7 @@ import path from 'path';
 
 import { z } from 'zod';
 
-import {
-  CLAW_SIBLING_TOKEN,
-  COACH_FIRST_RESULT_TIMEOUT,
-} from './config.js';
+import { CLAW_SIBLING_TOKEN, COACH_FIRST_RESULT_TIMEOUT } from './config.js';
 import { runAgentTask } from './agent-task-runner.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { log } from './log.js';
@@ -98,11 +95,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function jsonResponse(
-  res: http.ServerResponse,
-  status: number,
-  body: Record<string, unknown>,
-): void {
+function jsonResponse(res: http.ServerResponse, status: number, body: Record<string, unknown>): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -111,10 +104,7 @@ function jsonResponse(
   res.end(payload);
 }
 
-function ensureAuthorized(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): boolean {
+function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   const authHeader = req.headers.authorization;
   if (!authHeader || authHeader !== `Bearer ${CLAW_SIBLING_TOKEN}`) {
     jsonResponse(res, 401, { error: 'unauthorized' });
@@ -129,10 +119,7 @@ async function parseJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return JSON.parse(raw);
 }
 
-function getLearningGroup(
-  userId: number,
-  learningNodeId: number,
-): LearningGroup {
+function getLearningGroup(userId: number, learningNodeId: number): LearningGroup {
   const folder = `learning_u${userId}_n${learningNodeId}`;
   const groupDir = resolveGroupFolderPath(folder);
   fs.mkdirSync(groupDir, { recursive: true });
@@ -143,10 +130,7 @@ function getLearningGroup(
   };
 }
 
-function writeLearningWorkspaceFiles(
-  group: LearningGroup,
-  req: LearningRequest,
-): void {
+function writeLearningWorkspaceFiles(group: LearningGroup, req: LearningRequest): void {
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
   fs.rmSync(path.join(groupDir, 'sources'), { recursive: true, force: true });
@@ -174,9 +158,7 @@ function writeLearningWorkspaceFiles(
     `- parent_title: ${req.node.parentTitle || 'None'}`,
     '',
     '## Breadcrumbs',
-    req.node.breadcrumbs.length > 0
-      ? req.node.breadcrumbs.map((crumb) => `- ${crumb}`).join('\n')
-      : '- None',
+    req.node.breadcrumbs.length > 0 ? req.node.breadcrumbs.map((crumb) => `- ${crumb}`).join('\n') : '- None',
     '',
     '## Summary',
     req.node.summary || 'None yet.',
@@ -185,27 +167,18 @@ function writeLearningWorkspaceFiles(
     req.node.bodyMarkdown || 'None yet.',
     '',
     '## Existing Related Titles',
-    req.relatedTitles.length > 0
-      ? req.relatedTitles.map((title) => `- ${title}`).join('\n')
-      : '- None',
+    req.relatedTitles.length > 0 ? req.relatedTitles.map((title) => `- ${title}`).join('\n') : '- None',
     '',
     '## Existing Note Titles',
-    req.existingTitles.length > 0
-      ? req.existingTitles.map((title) => `- ${title}`).join('\n')
-      : '- None',
+    req.existingTitles.length > 0 ? req.existingTitles.map((title) => `- ${title}`).join('\n') : '- None',
   ].join('\n');
   fs.writeFileSync(path.join(groupDir, 'topic.md'), `${topicContent}\n`);
 
   const sourcesIndex =
     req.sources.length > 0
-      ? req.sources
-          .map((source) => `- [${source.title}](sources/${source.id}.md)`)
-          .join('\n')
+      ? req.sources.map((source) => `- [${source.title}](sources/${source.id}.md)`).join('\n')
       : '- No sources yet.';
-  fs.writeFileSync(
-    path.join(groupDir, 'sources.md'),
-    `# Sources\n\n${sourcesIndex}\n`,
-  );
+  fs.writeFileSync(path.join(groupDir, 'sources.md'), `# Sources\n\n${sourcesIndex}\n`);
 
   for (const source of req.sources) {
     const sourceContent = [
@@ -225,46 +198,28 @@ function writeLearningWorkspaceFiles(
       source.summaryMarkdown || 'No summary yet.',
       '',
       '## Key Points',
-      source.keyPoints.length > 0
-        ? source.keyPoints.map((point) => `- ${point}`).join('\n')
-        : 'No key points yet.',
+      source.keyPoints.length > 0 ? source.keyPoints.map((point) => `- ${point}`).join('\n') : 'No key points yet.',
       '',
       '## Extracted Content',
       source.extractedContent || 'No extracted content available.',
     ].join('\n');
-    fs.writeFileSync(
-      path.join(groupDir, 'sources', `${source.id}.md`),
-      `${sourceContent}\n`,
-    );
+    fs.writeFileSync(path.join(groupDir, 'sources', `${source.id}.md`), `${sourceContent}\n`);
   }
 
   const childrenContent =
     req.children.length > 0
-      ? req.children
-          .map(
-            (child) =>
-              `- ${child.title}: ${child.summary || 'No summary yet.'}`,
-          )
-          .join('\n')
+      ? req.children.map((child) => `- ${child.title}: ${child.summary || 'No summary yet.'}`).join('\n')
       : '- No child topics yet.';
-  fs.writeFileSync(
-    path.join(groupDir, 'children.md'),
-    `# Child Topics\n\n${childrenContent}\n`,
-  );
+  fs.writeFileSync(path.join(groupDir, 'children.md'), `# Child Topics\n\n${childrenContent}\n`);
 
   if (req.question) {
-    fs.writeFileSync(
-      path.join(groupDir, 'question.md'),
-      `# Current Question\n\n${req.question.questionText}\n`,
-    );
+    fs.writeFileSync(path.join(groupDir, 'question.md'), `# Current Question\n\n${req.question.questionText}\n`);
   } else {
     fs.rmSync(path.join(groupDir, 'question.md'), { force: true });
   }
 }
 
-export function extractStructuredPayload(
-  rawText: string,
-): Record<string, unknown> | null {
+export function extractStructuredPayload(rawText: string): Record<string, unknown> | null {
   const cleaned = rawText
     .replace(/<internal>[\s\S]*?<\/internal>/g, '')
     .replace(/<save-insight>[\s\S]*?<\/save-insight>/g, '')
@@ -415,10 +370,7 @@ export function buildLearningPrompt(req: LearningRequest): string {
   }
 }
 
-export async function handleLearningRequest(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-): Promise<void> {
+export async function handleLearningRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   if (!ensureAuthorized(req, res)) {
     return;
   }
@@ -454,10 +406,7 @@ export async function handleLearningRequest(
   };
 
   try {
-    const group = getLearningGroup(
-      learningReq.userId,
-      learningReq.learningNodeId,
-    );
+    const group = getLearningGroup(learningReq.userId, learningReq.learningNodeId);
     writeLearningWorkspaceFiles(group, learningReq);
 
     const result = await runAgentTask({

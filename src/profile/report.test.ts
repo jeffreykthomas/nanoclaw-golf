@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildCompactProfileSummary,
-  buildUserProfileReport,
-  renderUserProfileReport,
-} from './report.js';
-import type {
-  ProfileFact,
-  UserProfileDocument,
-  UserProfileSchema,
-} from './types.js';
+import { buildCompactProfileSummary, buildUserProfileReport, renderUserProfileReport } from './report.js';
+import type { ProfileFact, UserProfileDocument, UserProfileSchema } from './types.js';
 
 const schema: UserProfileSchema = {
   schema_name: 'test',
@@ -60,9 +52,7 @@ const profile: UserProfileDocument = {
       signature_strengths: ['discipline'],
     },
     goals_plans_obligations: {
-      current_goals: [
-        { goal: 'play twice a week', horizon: 'mid', priority: 8 },
-      ],
+      current_goals: [{ goal: 'play twice a week', horizon: 'mid', priority: 8 }],
     },
   },
   field_metadata: {

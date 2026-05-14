@@ -85,9 +85,7 @@ export type ArccosSyncPayload = z.infer<typeof SyncPayloadSchema>;
 // ---------------- HTTP helpers ----------------
 
 function buildRailsUrl(p: string): URL {
-  const base = COACH_APP_URL.endsWith('/')
-    ? COACH_APP_URL
-    : `${COACH_APP_URL}/`;
+  const base = COACH_APP_URL.endsWith('/') ? COACH_APP_URL : `${COACH_APP_URL}/`;
   return new URL(p.replace(/^\//, ''), base);
 }
 
@@ -109,17 +107,11 @@ async function fetchPendingTasks(options?: {
   });
   const bodyText = await response.text();
   if (!response.ok) {
-    throw new Error(
-      `arccos_pending_failed_${response.status}:${bodyText.slice(0, 200)}`,
-    );
+    throw new Error(`arccos_pending_failed_${response.status}:${bodyText.slice(0, 200)}`);
   }
-  const parsed = PendingResponseSchema.safeParse(
-    bodyText ? JSON.parse(bodyText) : { tasks: [] },
-  );
+  const parsed = PendingResponseSchema.safeParse(bodyText ? JSON.parse(bodyText) : { tasks: [] });
   if (!parsed.success) {
-    throw new Error(
-      `arccos_pending_parse_failed:${parsed.error.issues.map((i) => i.message).join(',')}`,
-    );
+    throw new Error(`arccos_pending_parse_failed:${parsed.error.issues.map((i) => i.message).join(',')}`);
   }
   return parsed.data.tasks;
 }
@@ -203,9 +195,7 @@ function buildPrompt(task: PendingArccosTask): string {
   ].join('\n');
 }
 
-async function runArccosSyncForTask(
-  task: PendingArccosTask,
-): Promise<ArccosSyncPayload> {
+async function runArccosSyncForTask(task: PendingArccosTask): Promise<ArccosSyncPayload> {
   const group = getSyncGroup(task.user_id);
   const result = await runAgentTask({
     folder: group.folder,
@@ -241,10 +231,7 @@ export async function syncArccosOnce(options?: {
   force?: boolean;
   userId?: number;
 }): Promise<ArccosSyncSummary> {
-  const limit = Math.max(
-    1,
-    Math.min(options?.limit ?? ARCCOS_SYNC_BATCH_LIMIT, 10),
-  );
+  const limit = Math.max(1, Math.min(options?.limit ?? ARCCOS_SYNC_BATCH_LIMIT, 10));
   const summary: ArccosSyncSummary = {
     attempted: 0,
     succeeded: 0,
@@ -294,10 +281,7 @@ export async function syncArccosOnce(options?: {
       } else {
         summary.failed += 1;
         log.warn('Arccos sync error from agent', { ...taskContext, error: payload.error, message: payload.message });
-        await postFail(
-          task.user_id,
-          payload.message || payload.error || 'unknown',
-        );
+        await postFail(task.user_id, payload.message || payload.error || 'unknown');
       }
     } catch (error) {
       summary.failed += 1;
@@ -363,12 +347,8 @@ export function startArccosSyncLoop(): void {
       const now = new Date();
       const hour = currentHourInTimezone(now);
       const weekday = currentWeekdayInTimezone(now);
-      const hourOk =
-        ARCCOS_SYNC_ALLOWED_HOURS.length === 0 ||
-        ARCCOS_SYNC_ALLOWED_HOURS.includes(hour);
-      const dayOk =
-        ARCCOS_SYNC_ALLOWED_WEEKDAYS.length === 0 ||
-        ARCCOS_SYNC_ALLOWED_WEEKDAYS.includes(weekday);
+      const hourOk = ARCCOS_SYNC_ALLOWED_HOURS.length === 0 || ARCCOS_SYNC_ALLOWED_HOURS.includes(hour);
+      const dayOk = ARCCOS_SYNC_ALLOWED_WEEKDAYS.length === 0 || ARCCOS_SYNC_ALLOWED_WEEKDAYS.includes(weekday);
       if (!hourOk || !dayOk) {
         log.debug('Arccos sync loop outside allowed window', { hour, weekday, hourOk, dayOk });
       } else {
@@ -382,24 +362,18 @@ export function startArccosSyncLoop(): void {
     }
   };
 
-  log.info(
-    'Arccos sync loop started',
-    {
-      intervalMs: ARCCOS_SYNC_LOOP_INTERVAL_MS,
-      allowedHours: ARCCOS_SYNC_ALLOWED_HOURS,
-      allowedWeekdays: ARCCOS_SYNC_ALLOWED_WEEKDAYS,
-      cutoffMonths: ARCCOS_SYNC_CUTOFF_MONTHS,
-    },
-  );
+  log.info('Arccos sync loop started', {
+    intervalMs: ARCCOS_SYNC_LOOP_INTERVAL_MS,
+    allowedHours: ARCCOS_SYNC_ALLOWED_HOURS,
+    allowedWeekdays: ARCCOS_SYNC_ALLOWED_WEEKDAYS,
+    cutoffMonths: ARCCOS_SYNC_CUTOFF_MONTHS,
+  });
   void loop();
 }
 
 // Fire-and-forget manual trigger used by the HTTP "Sync now" endpoint.
 // Returns immediately; the actual sync runs in the background.
-export function triggerArccosSyncInBackground(options: {
-  userId: number;
-  force?: boolean;
-}): void {
+export function triggerArccosSyncInBackground(options: { userId: number; force?: boolean }): void {
   setImmediate(async () => {
     try {
       await syncArccosOnce({
@@ -412,4 +386,3 @@ export function triggerArccosSyncInBackground(options: {
     }
   });
 }
-

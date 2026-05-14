@@ -11,6 +11,7 @@ export interface BipbotIngressEvent {
   jobId: string;
   issueId: string;
   issueUrl: string;
+  repoUrl: string | null;
   branch: string | null;
   prompt: string;
   sourceType: string;
@@ -56,19 +57,13 @@ export async function startBipbotIngressPoller(
   const appName = 'bipbot-ingress';
   const app =
     appModule.getApps().find((existing) => existing.name === appName) ||
-    appModule.initializeApp(
-      { credential: appModule.cert(serviceAccount as ServiceAccount) },
-      appName,
-    );
+    appModule.initializeApp({ credential: appModule.cert(serviceAccount as ServiceAccount) }, appName);
   const db = firestoreModule.getFirestore(app);
   const collection = db.collection('nanoClawIngress');
 
   const poll = async () => {
     try {
-      const snapshot = await collection
-        .where('status', '==', 'queued')
-        .limit(10)
-        .get();
+      const snapshot = await collection.where('status', '==', 'queued').limit(10).get();
       if (snapshot.empty) {
         setTimeout(poll, BIPBOT_INGRESS_POLL_INTERVAL);
         return;
@@ -76,40 +71,38 @@ export async function startBipbotIngressPoller(
 
       for (const doc of snapshot.docs.slice(0, 1)) {
         try {
-          const claimed = await db.runTransaction(
-            async (txn: FirebaseFirestore.Transaction) => {
-              const fresh = await txn.get(doc.ref);
-              if (!fresh.exists || fresh.data()?.status !== 'queued') {
-                return false;
-              }
-              txn.update(doc.ref, {
-                status: 'processing',
-                claimedAt: new Date().toISOString(),
-                claimedBy: 'nanoclaw-golf',
-              });
-              return true;
-            },
-          );
+          const claimed = await db.runTransaction(async (txn: FirebaseFirestore.Transaction) => {
+            const fresh = await txn.get(doc.ref);
+            if (!fresh.exists || fresh.data()?.status !== 'queued') {
+              return false;
+            }
+            txn.update(doc.ref, {
+              status: 'processing',
+              claimedAt: new Date().toISOString(),
+              claimedBy: 'nanoclaw-golf',
+            });
+            return true;
+          });
           if (!claimed) continue;
 
           const data = doc.data();
           const prompt = String(data.prompt || '');
-          const explicitBranch =
-            typeof data.branch === 'string' && data.branch.trim()
-              ? data.branch.trim()
-              : null;
+          const explicitBranch = typeof data.branch === 'string' && data.branch.trim() ? data.branch.trim() : null;
           const event: BipbotIngressEvent = {
             docId: doc.id,
             jobId: String(data.jobId || doc.id),
             issueId: String(data.issueId || doc.id),
             issueUrl: String(data.issueUrl || ''),
+            repoUrl:
+              typeof data.repoUrl === 'string' && data.repoUrl.trim()
+                ? data.repoUrl.trim()
+                : typeof data.repositoryUrl === 'string' && data.repositoryUrl.trim()
+                  ? data.repositoryUrl.trim()
+                  : null,
             branch: explicitBranch || extractBipbotTargetBranch(prompt),
             prompt,
             sourceType: String(data.sourceType || 'bipbot'),
-            actor:
-              data.actor && typeof data.actor === 'object'
-                ? (data.actor as Record<string, unknown>)
-                : undefined,
+            actor: data.actor && typeof data.actor === 'object' ? (data.actor as Record<string, unknown>) : undefined,
           };
 
           await deps.onIngressEvent(event);

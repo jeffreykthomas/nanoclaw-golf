@@ -18,13 +18,8 @@ function toBulletText(value: unknown): string[] {
   }
   if (typeof value === 'object') {
     return Object.entries(value as Record<string, unknown>)
-      .filter(
-        ([, entry]) => entry !== null && entry !== undefined && entry !== '',
-      )
-      .map(
-        ([key, entry]) =>
-          `${key.replace(/_/g, ' ')}: ${toBulletText(entry).join(', ')}`,
-      );
+      .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
+      .map(([key, entry]) => `${key.replace(/_/g, ' ')}: ${toBulletText(entry).join(', ')}`);
   }
   return [];
 }
@@ -37,16 +32,11 @@ function bulletsForFields(
     const value = inventory[category]?.[field];
     const rendered = toBulletText(value);
     if (rendered.length === 0) return [];
-    return rendered.map((entry) =>
-      label ? `${label}: ${entry}` : `${field.replace(/_/g, ' ')}: ${entry}`,
-    );
+    return rendered.map((entry) => (label ? `${label}: ${entry}` : `${field.replace(/_/g, ' ')}: ${entry}`));
   });
 }
 
-function golfBullets(
-  inventory: UserProfileInventory,
-  facts: ProfileFact[],
-): string[] {
+function golfBullets(inventory: UserProfileInventory, facts: ProfileFact[]): string[] {
   const selections = bulletsForFields(inventory, [
     {
       category: 'golf_game_coaching_profile',
@@ -118,11 +108,7 @@ function topThemes(doc: UserProfileDocument, facts: ProfileFact[]): string[] {
   return themes.slice(0, 6);
 }
 
-function summaryText(
-  schema: UserProfileSchema,
-  doc: UserProfileDocument,
-  facts: ProfileFact[],
-): string {
+function summaryText(schema: UserProfileSchema, doc: UserProfileDocument, facts: ProfileFact[]): string {
   const totalFields = countInventoryFields(schema);
   const golf = golfBullets(doc.inventory, facts);
   const themes = topThemes(doc, facts);
@@ -142,10 +128,7 @@ export function buildUserProfileReport(params: {
   profile: UserProfileDocument;
   facts: ProfileFact[];
 }): UserProfileReport {
-  const unknowns = listUnknownFields(
-    params.schema,
-    params.profile.inventory,
-  ).slice(0, 12);
+  const unknowns = listUnknownFields(params.schema, params.profile.inventory).slice(0, 12);
   const sections: UserProfileReport['sections'] = [
     {
       heading: 'Golf Snapshot',
@@ -264,12 +247,7 @@ export function buildUserProfileReport(params: {
 }
 
 export function renderUserProfileReport(report: UserProfileReport): string {
-  const lines: string[] = [
-    report.title,
-    `Generated: ${report.generatedAt}`,
-    '',
-    report.summary,
-  ];
+  const lines: string[] = [report.title, `Generated: ${report.generatedAt}`, '', report.summary];
 
   for (const section of report.sections) {
     lines.push('', section.heading);
@@ -292,9 +270,6 @@ export function buildCompactProfileSummary(report: UserProfileReport): string {
   const sectionBullets = report.sections.flatMap((section) =>
     section.bullets.slice(0, section.heading === 'Golf Snapshot' ? 3 : 2),
   );
-  const lines = [
-    report.summary,
-    ...sectionBullets.slice(0, 8).map((bullet) => `- ${bullet}`),
-  ];
+  const lines = [report.summary, ...sectionBullets.slice(0, 8).map((bullet) => `- ${bullet}`)];
   return lines.join('\n').slice(0, 1800).trim();
 }

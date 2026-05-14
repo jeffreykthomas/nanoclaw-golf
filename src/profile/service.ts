@@ -2,7 +2,12 @@ import { log } from '../log.js';
 import { extractProfileFacts } from './facts.js';
 import { maybeRunProfileModelUpdate } from './model.js';
 import { buildCompactProfileSummary, buildUserProfileReport, renderUserProfileReport } from './report.js';
-import { countInventoryFields, createEmptyFieldMetadata, createEmptyInventory, loadUserProfileSchema } from './schema.js';
+import {
+  countInventoryFields,
+  createEmptyFieldMetadata,
+  createEmptyInventory,
+  loadUserProfileSchema,
+} from './schema.js';
 import {
   appendProfileFacts,
   loadProfileFacts,
@@ -93,7 +98,9 @@ function buildFieldMetadata(
   const metadata = createEmptyFieldMetadata(schema);
 
   for (const category of schema.top_level_categories) {
-    const relevantFacts = facts.filter((fact) => factCategoryToSchemaCategories(fact.category).includes(category.key)).slice(-5);
+    const relevantFacts = facts
+      .filter((fact) => factCategoryToSchemaCategories(fact.category).includes(category.key))
+      .slice(-5);
 
     for (const field of category.fields) {
       const value = inventory[category.key]?.[field.key];
@@ -103,7 +110,10 @@ function buildFieldMetadata(
       }
 
       metadata[category.key][field.key] = {
-        confidence: confidenceForSamples(categoryEvidenceCount[category.key] ?? 0) ?? previous?.[category.key]?.[field.key]?.confidence ?? null,
+        confidence:
+          confidenceForSamples(categoryEvidenceCount[category.key] ?? 0) ??
+          previous?.[category.key]?.[field.key]?.confidence ??
+          null,
         evidenceCount: categoryEvidenceCount[category.key] ?? previous?.[category.key]?.[field.key]?.evidenceCount ?? 0,
         sources: relevantFacts.map((fact) => fact.id) ?? previous?.[category.key]?.[field.key]?.sources ?? [],
         updatedAt: updatedAt ?? previous?.[category.key]?.[field.key]?.updatedAt ?? null,
@@ -275,7 +285,7 @@ export async function getLatestCheckInContext(userId: string): Promise<string | 
   if (facts.length === 0) return null;
 
   const latest = facts.at(-1);
-  const latestGolf = [...facts].reverse().find((fact) => ['golf', 'goal', 'priority'].includes(fact.category));
+  const latestGolf = [...facts].reverse().find((fact) => fact.category === 'golf');
 
   const lines: string[] = [];
   if (latest) lines.push(renderCheckInFact('Most recent signal', latest));

@@ -51,9 +51,7 @@ const ReportPayloadSchema = z.object({
 export type PendingReportTask = z.infer<typeof PendingTaskSchema>;
 
 function buildRailsUrl(path: string): URL {
-  const base = COACH_APP_URL.endsWith('/')
-    ? COACH_APP_URL
-    : `${COACH_APP_URL}/`;
+  const base = COACH_APP_URL.endsWith('/') ? COACH_APP_URL : `${COACH_APP_URL}/`;
   return new URL(path.replace(/^\//, ''), base);
 }
 
@@ -71,18 +69,12 @@ async function fetchPendingTasks(limit: number): Promise<PendingReportTask[]> {
 
   const bodyText = await response.text();
   if (!response.ok) {
-    throw new Error(
-      `pending_fetch_failed_${response.status}:${bodyText.slice(0, 200)}`,
-    );
+    throw new Error(`pending_fetch_failed_${response.status}:${bodyText.slice(0, 200)}`);
   }
 
-  const parsed = PendingResponseSchema.safeParse(
-    bodyText ? JSON.parse(bodyText) : { tasks: [] },
-  );
+  const parsed = PendingResponseSchema.safeParse(bodyText ? JSON.parse(bodyText) : { tasks: [] });
   if (!parsed.success) {
-    throw new Error(
-      `pending_parse_failed:${parsed.error.issues.map((i) => i.message).join(',')}`,
-    );
+    throw new Error(`pending_parse_failed:${parsed.error.issues.map((i) => i.message).join(',')}`);
   }
   return parsed.data.tasks;
 }
@@ -98,9 +90,7 @@ function getReportGroup(userId: number): ReportGroup {
   };
 }
 
-async function synthesizeReport(
-  task: PendingReportTask,
-): Promise<z.infer<typeof ReportPayloadSchema>> {
+async function synthesizeReport(task: PendingReportTask): Promise<z.infer<typeof ReportPayloadSchema>> {
   const group = getReportGroup(task.user_id);
   const result = await runAgentTask({
     folder: group.folder,
@@ -160,13 +150,8 @@ export interface SyncSummary {
   failed: number;
 }
 
-export async function syncSelfUnderstandingReportsOnce(options?: {
-  limit?: number;
-}): Promise<SyncSummary> {
-  const limit = Math.max(
-    1,
-    Math.min(options?.limit ?? SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT, 25),
-  );
+export async function syncSelfUnderstandingReportsOnce(options?: { limit?: number }): Promise<SyncSummary> {
+  const limit = Math.max(1, Math.min(options?.limit ?? SELF_UNDERSTANDING_REPORTS_BATCH_LIMIT, 25));
   const summary: SyncSummary = {
     attempted: 0,
     created: 0,
@@ -216,7 +201,11 @@ export async function syncSelfUnderstandingReportsOnce(options?: {
         log.warn('Report stale on post-back', { ...taskContext, reason: result.body.reason });
       } else {
         summary.failed += 1;
-        log.warn('Report post returned unexpected status', { ...taskContext, status: result.status, body: result.body });
+        log.warn('Report post returned unexpected status', {
+          ...taskContext,
+          status: result.status,
+          body: result.body,
+        });
       }
     } catch (error) {
       summary.failed += 1;
@@ -273,13 +262,9 @@ export function startSelfUnderstandingReportsLoop(): void {
     }
   };
 
-  log.info(
-    'Self-understanding report loop started',
-    {
-      intervalMs: SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS,
-      allowedHours: SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS,
-    },
-  );
+  log.info('Self-understanding report loop started', {
+    intervalMs: SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS,
+    allowedHours: SELF_UNDERSTANDING_REPORTS_ALLOWED_HOURS,
+  });
   void loop();
 }
-

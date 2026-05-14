@@ -188,6 +188,11 @@ async function drainSession(session: Session): Promise<void> {
     migrateDeliveredTable(inDb);
 
     for (const msg of undelivered) {
+      if (msg.channel_type?.startsWith('internal-')) {
+        markDelivered(inDb, msg.id, null);
+        continue;
+      }
+
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);

@@ -52,51 +52,31 @@ export async function loadUserProfileSchema(): Promise<UserProfileSchema> {
   if (cachedSchema) return cachedSchema;
   cachedSchema = fs
     .readFile(schemaPath(), 'utf8')
-    .then(
-      (raw) => userProfileSchema.parse(JSON.parse(raw)) as UserProfileSchema,
-    );
+    .then((raw) => userProfileSchema.parse(JSON.parse(raw)) as UserProfileSchema);
   return cachedSchema;
 }
 
-export function createEmptyInventory(
-  schema: UserProfileSchema,
-): UserProfileInventory {
-  return schema.top_level_categories.reduce<UserProfileInventory>(
-    (acc, category) => {
-      acc[category.key] = category.fields.reduce<Record<string, unknown>>(
-        (fieldAcc, field) => {
-          fieldAcc[field.key] = null;
-          return fieldAcc;
-        },
-        {},
-      );
-      return acc;
-    },
-    {},
-  );
+export function createEmptyInventory(schema: UserProfileSchema): UserProfileInventory {
+  return schema.top_level_categories.reduce<UserProfileInventory>((acc, category) => {
+    acc[category.key] = category.fields.reduce<Record<string, unknown>>((fieldAcc, field) => {
+      fieldAcc[field.key] = null;
+      return fieldAcc;
+    }, {});
+    return acc;
+  }, {});
 }
 
-export function createEmptyFieldMetadata(
-  schema: UserProfileSchema,
-): UserProfileFieldMetadata {
-  return schema.top_level_categories.reduce<UserProfileFieldMetadata>(
-    (acc, category) => {
-      acc[category.key] = category.fields.reduce<
-        Record<string, ProfileFieldMeta>
-      >((fieldAcc, field) => {
-        fieldAcc[field.key] = emptyFieldMeta();
-        return fieldAcc;
-      }, {});
-      return acc;
-    },
-    {},
-  );
+export function createEmptyFieldMetadata(schema: UserProfileSchema): UserProfileFieldMetadata {
+  return schema.top_level_categories.reduce<UserProfileFieldMetadata>((acc, category) => {
+    acc[category.key] = category.fields.reduce<Record<string, ProfileFieldMeta>>((fieldAcc, field) => {
+      fieldAcc[field.key] = emptyFieldMeta();
+      return fieldAcc;
+    }, {});
+    return acc;
+  }, {});
 }
 
-function normalizeObjectField(
-  field: ProfileFieldSchema,
-  value: unknown,
-): Record<string, unknown> | null {
+function normalizeObjectField(field: ProfileFieldSchema, value: unknown): Record<string, unknown> | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'object' || Array.isArray(value) || !field.schema) {
     return null;
@@ -104,18 +84,12 @@ function normalizeObjectField(
   const input = value as Record<string, unknown>;
   const normalized: Record<string, unknown> = {};
   for (const [subKey, subType] of Object.entries(field.schema)) {
-    normalized[subKey] = normalizeValue(
-      { key: subKey, type: subType },
-      input[subKey],
-    );
+    normalized[subKey] = normalizeValue({ key: subKey, type: subType }, input[subKey]);
   }
   return normalized;
 }
 
-function normalizeListObjectField(
-  field: ProfileFieldSchema,
-  value: unknown,
-): Array<Record<string, unknown>> | null {
+function normalizeListObjectField(field: ProfileFieldSchema, value: unknown): Array<Record<string, unknown>> | null {
   if (value === null || value === undefined) return null;
   if (!Array.isArray(value) || !field.schema) return null;
   const items = value
@@ -127,25 +101,16 @@ function normalizeListObjectField(
 function normalizeStringList(value: unknown): string[] | null {
   if (value === null || value === undefined) return null;
   if (!Array.isArray(value)) return null;
-  const items = value
-    .map((item) => (typeof item === 'string' ? item.trim() : ''))
-    .filter(Boolean);
+  const items = value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean);
   return items.length > 0 ? items : [];
 }
 
-function normalizeEnum(
-  field: ProfileFieldSchema,
-  value: unknown,
-): string | null {
+function normalizeEnum(field: ProfileFieldSchema, value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if (
-    field.options &&
-    field.options.length > 0 &&
-    !field.options.includes(trimmed)
-  ) {
+  if (field.options && field.options.length > 0 && !field.options.includes(trimmed)) {
     return null;
   }
   return trimmed;
@@ -196,44 +161,28 @@ export function normalizeInventory(
       : {};
   const fallbackInventory = fallback ?? createEmptyInventory(schema);
 
-  return schema.top_level_categories.reduce<UserProfileInventory>(
-    (acc, category) => {
-      const categorySource =
-        source[category.key] &&
-        typeof source[category.key] === 'object' &&
-        !Array.isArray(source[category.key])
-          ? (source[category.key] as Record<string, unknown>)
-          : {};
-      const categoryFallback = fallbackInventory[category.key] ?? {};
+  return schema.top_level_categories.reduce<UserProfileInventory>((acc, category) => {
+    const categorySource =
+      source[category.key] && typeof source[category.key] === 'object' && !Array.isArray(source[category.key])
+        ? (source[category.key] as Record<string, unknown>)
+        : {};
+    const categoryFallback = fallbackInventory[category.key] ?? {};
 
-      acc[category.key] = category.fields.reduce<Record<string, unknown>>(
-        (fieldAcc, field) => {
-          const normalized = normalizeValue(field, categorySource[field.key]);
-          fieldAcc[field.key] =
-            normalized !== null && normalized !== undefined
-              ? normalized
-              : (categoryFallback[field.key] ?? null);
-          return fieldAcc;
-        },
-        {},
-      );
-      return acc;
-    },
-    {},
-  );
+    acc[category.key] = category.fields.reduce<Record<string, unknown>>((fieldAcc, field) => {
+      const normalized = normalizeValue(field, categorySource[field.key]);
+      fieldAcc[field.key] =
+        normalized !== null && normalized !== undefined ? normalized : (categoryFallback[field.key] ?? null);
+      return fieldAcc;
+    }, {});
+    return acc;
+  }, {});
 }
 
 export function countInventoryFields(schema: UserProfileSchema): number {
-  return schema.top_level_categories.reduce(
-    (total, category) => total + category.fields.length,
-    0,
-  );
+  return schema.top_level_categories.reduce((total, category) => total + category.fields.length, 0);
 }
 
-export function listUnknownFields(
-  schema: UserProfileSchema,
-  inventory: UserProfileInventory,
-): string[] {
+export function listUnknownFields(schema: UserProfileSchema, inventory: UserProfileInventory): string[] {
   const unknowns: string[] = [];
   for (const category of schema.top_level_categories) {
     const values = inventory[category.key] ?? {};

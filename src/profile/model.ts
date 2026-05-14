@@ -1,12 +1,7 @@
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { normalizeInventory } from './schema.js';
-import type {
-  ProfileFieldSchema,
-  ProfileFact,
-  UserProfileInventory,
-  UserProfileSchema,
-} from './types.js';
+import type { ProfileFieldSchema, ProfileFact, UserProfileInventory, UserProfileSchema } from './types.js';
 
 type ProfileModelConfig = {
   apiKey?: string;
@@ -28,29 +23,18 @@ function readProfileModelConfig(): ProfileModelConfig {
   return {
     apiKey: process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY,
     authToken: process.env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN,
-    baseUrl:
-      process.env.ANTHROPIC_BASE_URL ||
-      env.ANTHROPIC_BASE_URL ||
-      'https://api.anthropic.com',
-    model:
-      process.env.PROFILE_MODEL || env.PROFILE_MODEL || 'claude-sonnet-4-6',
+    baseUrl: process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+    model: process.env.PROFILE_MODEL || env.PROFILE_MODEL || 'claude-sonnet-4-6',
     maxTokens: Math.max(
       1024,
-      parseInt(
-        process.env.PROFILE_MAX_OUTPUT_TOKENS ||
-          env.PROFILE_MAX_OUTPUT_TOKENS ||
-          '6000',
-        10,
-      ) || 6000,
+      parseInt(process.env.PROFILE_MAX_OUTPUT_TOKENS || env.PROFILE_MAX_OUTPUT_TOKENS || '6000', 10) || 6000,
     ),
   };
 }
 
 function apiEndpoint(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '');
-  return trimmed.endsWith('/v1')
-    ? `${trimmed}/messages`
-    : `${trimmed}/v1/messages`;
+  return trimmed.endsWith('/v1') ? `${trimmed}/messages` : `${trimmed}/v1/messages`;
 }
 
 function schemaToJsonType(field: ProfileFieldSchema): Record<string, unknown> {
@@ -82,17 +66,11 @@ function schemaToJsonType(field: ProfileFieldSchema): Record<string, unknown> {
       };
     case 'enum':
       return {
-        anyOf: [
-          { type: 'null' },
-          { type: 'string', enum: field.options ?? [] },
-        ],
+        anyOf: [{ type: 'null' }, { type: 'string', enum: field.options ?? [] }],
       };
     case 'enum_short_mid_long':
       return {
-        anyOf: [
-          { type: 'null' },
-          { type: 'string', enum: ['short', 'mid', 'long'] },
-        ],
+        anyOf: [{ type: 'null' }, { type: 'string', enum: ['short', 'mid', 'long'] }],
       };
     case 'scale_0_10':
       return {
@@ -103,16 +81,11 @@ function schemaToJsonType(field: ProfileFieldSchema): Record<string, unknown> {
   }
 }
 
-function schemaMapToJsonSchema(
-  schemaMap: Record<string, string>,
-): Record<string, unknown> {
-  const properties = Object.entries(schemaMap).reduce<Record<string, unknown>>(
-    (acc, [key, type]) => {
-      acc[key] = schemaToJsonType({ key, type });
-      return acc;
-    },
-    {},
-  );
+function schemaMapToJsonSchema(schemaMap: Record<string, string>): Record<string, unknown> {
+  const properties = Object.entries(schemaMap).reduce<Record<string, unknown>>((acc, [key, type]) => {
+    acc[key] = schemaToJsonType({ key, type });
+    return acc;
+  }, {});
 
   return {
     type: 'object',
@@ -122,21 +95,14 @@ function schemaMapToJsonSchema(
   };
 }
 
-function buildInventoryJsonSchema(
-  schema: UserProfileSchema,
-): Record<string, unknown> {
-  const properties = schema.top_level_categories.reduce<
-    Record<string, unknown>
-  >((acc, category) => {
+function buildInventoryJsonSchema(schema: UserProfileSchema): Record<string, unknown> {
+  const properties = schema.top_level_categories.reduce<Record<string, unknown>>((acc, category) => {
     acc[category.key] = {
       type: 'object',
-      properties: category.fields.reduce<Record<string, unknown>>(
-        (fieldAcc, field) => {
-          fieldAcc[field.key] = schemaToJsonType(field);
-          return fieldAcc;
-        },
-        {},
-      ),
+      properties: category.fields.reduce<Record<string, unknown>>((fieldAcc, field) => {
+        fieldAcc[field.key] = schemaToJsonType(field);
+        return fieldAcc;
+      }, {}),
       required: category.fields.map((field) => field.key),
       additionalProperties: false,
     };
@@ -155,18 +121,11 @@ function buildEvidenceBlock(facts: ProfileFact[]): string {
   if (facts.length === 0) return '(none)';
   return facts
     .slice(-60)
-    .map(
-      (fact) =>
-        `- [${fact.category}] ${fact.fact} | source=${fact.source} | evidence=${fact.evidence}`,
-    )
+    .map((fact) => `- [${fact.category}] ${fact.fact} | source=${fact.source} | evidence=${fact.evidence}`)
     .join('\n');
 }
 
-function buildPrompt(params: {
-  userId: string;
-  currentInventory: UserProfileInventory;
-  facts: ProfileFact[];
-}): string {
+function buildPrompt(params: { userId: string; currentInventory: UserProfileInventory; facts: ProfileFact[] }): string {
   return [
     `Update the structured coaching profile for user ${params.userId}.`,
     'Only fill fields that are clearly supported by the evidence.',
@@ -236,8 +195,7 @@ export async function maybeRunProfileModelUpdate(params: {
         tools: [
           {
             name: 'update_user_profile',
-            description:
-              'Return the complete updated user profile inventory using the provided schema.',
+            description: 'Return the complete updated user profile inventory using the provided schema.',
             input_schema: buildInventoryJsonSchema(params.schema),
           },
         ],
@@ -255,20 +213,14 @@ export async function maybeRunProfileModelUpdate(params: {
     const payload = (await response.json()) as AnthropicMessageResponse;
     const toolUse = payload.content?.find(
       (item): item is AnthropicToolUse =>
-        item.type === 'tool_use' &&
-        'name' in item &&
-        item.name === 'update_user_profile',
+        item.type === 'tool_use' && 'name' in item && item.name === 'update_user_profile',
     );
     if (!toolUse) {
       throw new Error('profile_model_missing_tool_use');
     }
 
     return {
-      inventory: normalizeInventory(
-        params.schema,
-        toolUse.input,
-        params.currentInventory,
-      ),
+      inventory: normalizeInventory(params.schema, toolUse.input, params.currentInventory),
       status: 'updated',
     };
   } catch (error) {

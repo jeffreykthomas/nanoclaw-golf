@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  detectProfileCommand,
-  getUserProfileInventoryView,
-} from './service.js';
+import { detectProfileCommand, getUserProfileInventoryView } from './service.js';
 
 describe('detectProfileCommand', () => {
   it('detects explicit profile report requests', () => {
@@ -12,9 +9,7 @@ describe('detectProfileCommand', () => {
   });
 
   it('detects summary requests', () => {
-    expect(detectProfileCommand('What do you know about me so far?')).toBe(
-      'summary',
-    );
+    expect(detectProfileCommand('What do you know about me so far?')).toBe('summary');
   });
 });
 

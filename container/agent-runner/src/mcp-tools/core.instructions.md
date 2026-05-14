@@ -4,11 +4,11 @@
 
 ### Mid-turn updates (`send_message`)
 
-Use the `mcp__nanoclaw__send_message` tool to send a message while you're still working (before your final output). If you have one destination, `to` is optional; with multiple, specify it. Pace your updates to the length of the work:
+Use the `mcp__nanoclaw__send_message` tool only for named/proactive sends while you're still working. Do not use it for normal replies to the current conversation; write the final response directly instead. If you do use `send_message`, include `to`.
 
 - **Short turn (≤2 quick tool calls):** Don't narrate. Output any response.
-- **Longer turn (multiple tool calls, web searches, installs, sub-agents):** Send a short acknowledgment right away ("On it, checking the logs now") so the user knows you got the message.
-- **Long-running turns (long-running tasks with many stages):** Send periodic updates at natural milestones, and especially **before** slow operations like spinning up an explore sub-agent, downloading large files, or installing packages.
+- **Longer turn (multiple tool calls, web searches, installs, sub-agents):** Prefer a reaction or final response over a separate current-conversation update unless a named destination explicitly needs a proactive message.
+- **Long-running turns (long-running tasks with many stages):** Send periodic updates only to named destinations and only at natural milestones.
 
 **Never narrate micro-steps.** "I'm going to read the file now… okay, I'm reading it… now I'm parsing it…" is noise. Updates should mark meaningful transitions, not every tool call.
 

@@ -76,22 +76,125 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-export function buildPrompt(req: CoachRequest, profileSummary?: string | null, recentProfileContext?: string | null): string {
+function extractConversationHistory(context: Record<string, unknown>): unknown[] {
+  const raw =
+    context.recent_messages ?? context.recentMessages ?? context.conversation_history ?? context.conversationHistory;
+  return Array.isArray(raw) ? raw : [];
+}
+
+function contextWithoutConversationHistory(context: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...context };
+  delete rest.recent_messages;
+  delete rest.recentMessages;
+  delete rest.conversation_history;
+  delete rest.conversationHistory;
+  return rest;
+}
+
+function contextString(context: Record<string, unknown>, key: string): string {
+  const value = context[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function isLifeModeContext(req: CoachRequest): boolean {
+  const appMode = contextString(req.context, 'app_mode') || contextString(req.context, 'appMode');
+  const controller = contextString(req.context, 'controller');
+  const path = contextString(req.context, 'path');
+  return (
+    appMode === 'life' ||
+    controller.startsWith('self_understanding') ||
+    controller.startsWith('learning') ||
+    path.includes('/self_understanding') ||
+    path.includes('/learning')
+  );
+}
+
+function isGolfRelatedContext(req: CoachRequest): boolean {
+  const message = req.message.toLowerCase();
+  const controller = contextString(req.context, 'controller');
+  const path = contextString(req.context, 'path');
+  const explicitlyNotGolf =
+    /\b(not|outside|without|no)\s+(?:the\s+)?golf\b/.test(message) || /\bnot\b[\s\S]{0,80}\bgolf\b/.test(message);
+  const explicitGolfRequest =
+    !explicitlyNotGolf &&
+    /\b(golf|round|course|hole|tee|green|fairway|putt|putting|driver|iron|wedge|handicap|swing|club championship)\b/.test(
+      message,
+    );
+  const golfPageContext =
+    Boolean(req.context.course_id || req.context.course_name || req.context.hole_number) ||
+    controller === 'courses' ||
+    path.startsWith('/courses');
+
+  return explicitGolfRequest || golfPageContext;
+}
+
+function systemInstructions(req: CoachRequest): string[] {
+  if (isLifeModeContext(req) && !isGolfRelatedContext(req)) {
+    return [
+      'You are a concise, practical personal coach inside Life Mode.',
+      'Support self-understanding, habits, spiritual or mental practices, family/work context, learning, and values-based reflection.',
+      'Golf is one possible interest in the user profile, not the default frame. Do not steer the answer toward golf unless the user explicitly brings up golf.',
+      'Reply with user-facing text only. If useful, include one clear next action or practice.',
+    ];
+  }
+
+  return [
+    'You are a concise, practical golf coach.',
+    'Reply with user-facing text only.',
+    'If useful, include one clear next action or drill. Do not invent stored profile data.',
+  ];
+}
+
+function shouldIncludeProfileSummary(req: CoachRequest): boolean {
+  return !isLifeModeContext(req) || isGolfRelatedContext(req);
+}
+
+function filteredRecentProfileContext(req: CoachRequest, recentProfileContext?: string | null): string | null {
+  if (!recentProfileContext?.trim()) return null;
+  if (shouldIncludeProfileSummary(req)) return recentProfileContext.trim();
+
+  const lines = recentProfileContext
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^Latest golf thread\b/i.test(line))
+    .filter((line) => !/\): golf -/i.test(line));
+
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
+export function buildPrompt(
+  req: CoachRequest,
+  profileSummary?: string | null,
+  recentProfileContext?: string | null,
+): string {
+  const currentDate = new Date().toISOString();
+  const conversationHistory = extractConversationHistory(req.context);
+  const context = contextWithoutConversationHistory(req.context);
   const contextXml =
-    Object.keys(req.context).length > 0 ? `\n<context>${escapeXml(JSON.stringify(req.context))}</context>` : '';
-  const profileXml = profileSummary?.trim()
-    ? `\n<user-profile-summary>${escapeXml(profileSummary.trim())}</user-profile-summary>`
-    : '';
-  const recentProfileXml = recentProfileContext?.trim()
-    ? `\n<recent-profile-context>${escapeXml(recentProfileContext.trim())}</recent-profile-context>`
+    Object.keys(context).length > 0 ? `\n<context>${escapeXml(JSON.stringify(context))}</context>` : '';
+  const conversationHistoryXml =
+    conversationHistory.length > 0
+      ? `\n<conversation-history>${escapeXml(JSON.stringify(conversationHistory))}</conversation-history>`
+      : '';
+  const profileXml =
+    shouldIncludeProfileSummary(req) && profileSummary?.trim()
+      ? `\n<user-profile-summary>${escapeXml(profileSummary.trim())}</user-profile-summary>`
+      : '';
+  const recentContext = filteredRecentProfileContext(req, recentProfileContext);
+  const recentProfileXml = recentContext
+    ? `\n<recent-profile-context>${escapeXml(recentContext)}</recent-profile-context>`
     : '';
 
   return [
-    'You are a concise, practical golf coach. Reply with user-facing text only.',
-    'If useful, include one clear next action or drill. Do not invent stored profile data.',
+    ...systemInstructions(req),
+    `Current date/time: ${currentDate}.`,
+    'Use the current message and conversation history as the freshest context.',
+    'Treat long-term profile summaries as background memory. Ignore time-sensitive profile claims unless the current message, conversation history, or recent profile context confirms they are still current.',
     '',
     `<coach-request phase="${escapeXml(req.phase)}" userId="${req.userId}">`,
     `<message>${escapeXml(req.message)}</message>`,
+    conversationHistoryXml,
     contextXml,
     profileXml,
     recentProfileXml,
