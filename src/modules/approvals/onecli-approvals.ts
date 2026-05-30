@@ -84,6 +84,10 @@ export function resolveOneCLIApproval(approvalId: string, selectedOption: string
 
 export function startOneCLIApprovalHandler(deliveryAdapter: ChannelDeliveryAdapter): void {
   if (handle) return;
+  if (!ONECLI_URL || !ONECLI_API_KEY) {
+    log.info('OneCLI approval handler skipped — gateway not configured');
+    return;
+  }
   adapterRef = deliveryAdapter;
 
   // Sweep any rows left over from a previous process.

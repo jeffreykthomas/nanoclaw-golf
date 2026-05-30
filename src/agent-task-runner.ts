@@ -23,6 +23,12 @@ export interface AgentTaskResult {
   rawMessage: MessageOut;
 }
 
+export interface QueuedAgentTask {
+  agentGroup: AgentGroup;
+  sessionId: string;
+  messageId: string;
+}
+
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -47,7 +53,7 @@ function ensureAgentGroup(folder: string, name: string): AgentGroup {
   return group;
 }
 
-function parseOutputText(content: string): string {
+export function parseOutputText(content: string): string {
   try {
     const parsed = JSON.parse(content) as { text?: unknown };
     if (typeof parsed.text === 'string') return parsed.text;
@@ -55,6 +61,20 @@ function parseOutputText(content: string): string {
     // Some providers/tools may write a raw text payload. Treat it as text.
   }
   return content;
+}
+
+export function getAgentTaskOutput(agentGroupId: string, sessionId: string, messageId: string): MessageOut | null {
+  let db;
+  try {
+    db = openOutboundDb(agentGroupId, sessionId);
+    const rows = getDueOutboundMessages(db) as Array<MessageOut & { in_reply_to?: string | null }>;
+    return rows.find((row) => row.in_reply_to === messageId) ?? null;
+  } catch {
+    // The outbound DB may not exist until the session folder is initialized.
+    return null;
+  } finally {
+    db?.close();
+  }
 }
 
 async function waitForTaskOutput(
@@ -66,17 +86,8 @@ async function waitForTaskOutput(
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    let db;
-    try {
-      db = openOutboundDb(agentGroupId, sessionId);
-      const rows = getDueOutboundMessages(db) as Array<MessageOut & { in_reply_to?: string | null }>;
-      const reply = rows.find((row) => row.in_reply_to === messageId);
-      if (reply) return reply;
-    } catch {
-      // The outbound DB may not exist until the session folder is initialized.
-    } finally {
-      db?.close();
-    }
+    const reply = getAgentTaskOutput(agentGroupId, sessionId, messageId);
+    if (reply) return reply;
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -84,7 +95,7 @@ async function waitForTaskOutput(
   throw new Error(`agent_task_timeout:${messageId}`);
 }
 
-export async function runAgentTask(options: AgentTaskOptions): Promise<AgentTaskResult> {
+export async function queueAgentTask(options: AgentTaskOptions): Promise<QueuedAgentTask> {
   const agentGroup = ensureAgentGroup(options.folder, options.name);
   if (isCoachPortalFolder(agentGroup.folder)) {
     applyCoachPortalMcpConfig(agentGroup.folder);
@@ -113,12 +124,25 @@ export async function runAgentTask(options: AgentTaskOptions): Promise<AgentTask
     messageId,
   });
 
-  const rawMessage = await waitForTaskOutput(agentGroup.id, session.id, messageId, options.timeoutMs);
   return {
     agentGroup,
     sessionId: session.id,
     messageId,
+  };
+}
+
+export async function waitForQueuedAgentTask(task: QueuedAgentTask, timeoutMs: number): Promise<AgentTaskResult> {
+  const rawMessage = await waitForTaskOutput(task.agentGroup.id, task.sessionId, task.messageId, timeoutMs);
+  return {
+    agentGroup: task.agentGroup,
+    sessionId: task.sessionId,
+    messageId: task.messageId,
     text: parseOutputText(rawMessage.content),
     rawMessage,
   };
+}
+
+export async function runAgentTask(options: AgentTaskOptions): Promise<AgentTaskResult> {
+  const task = await queueAgentTask(options);
+  return waitForQueuedAgentTask(task, options.timeoutMs);
 }

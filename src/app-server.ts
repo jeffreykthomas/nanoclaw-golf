@@ -15,11 +15,12 @@ import { runAgentTask } from './agent-task-runner.js';
 import { startArccosSyncLoop, triggerArccosSyncInBackground } from './arccos-sync.js';
 import { startBipbotIngressPoller, type BipbotIngressEvent } from './bipbot-ingress-poller.js';
 import { startAutoCheckInLoop } from './checkin-engine.js';
+import { handleCoachJobCreate, handleCoachJobStatus } from './coach-jobs.js';
 import { handleCoachRequest, handleProfileInventoryRequest } from './coach-http.js';
 import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
-import { handleLearningRequest } from './learning-http.js';
+import { handleLearningJobCreate, handleLearningJobStatus, handleLearningRequest } from './learning-http.js';
 import { log } from './log.js';
 import { startSelfUnderstandingReportsLoop } from './report-sync.js';
 import { sendTelegramMirrorMessage } from './telegram-notifier.js';
@@ -74,10 +75,15 @@ function buildBipbotPrompt(event: BipbotIngressEvent): string {
     '[BipBot ingress]',
     `Issue: ${event.issueId}`,
     event.issueUrl ? `URL: ${event.issueUrl}` : '',
+    event.sourceCommentId ? `Source comment ID: ${event.sourceCommentId}` : '',
+    event.sourceUrl ? `Source URL: ${event.sourceUrl}` : '',
     repoUrl ? `Repository: ${repoUrl}` : '',
     event.branch ? `Target branch: ${event.branch}` : '',
+    event.github?.prUrl ? `GitHub PR: ${event.github.prUrl}` : '',
+    event.github?.updatePr ? 'GitHub update mode: true' : '',
     event.sourceType ? `Source: ${event.sourceType}` : '',
     'Workflow: evaluate this issue and, when implementation is warranted, queue the downstream work with `bipbot_create_codex_job`. Do not require a chat destination and do not open a PR directly.',
+    'Linear reply: this NanoClaw task owns the Linear response. Before finishing, call `bipbot_enqueue_linear_comment` with either the queued-job summary or specific follow-up questions. If details are missing, ask in Linear and do not queue implementation yet.',
     event.branch
       ? `Branch discipline: inspect and queue downstream work against \`${event.branch}\`; do not validate against \`main\` unless the issue explicitly targets \`main\`.`
       : '',
@@ -109,6 +115,28 @@ export async function startAppHttpServer(options?: { continueOnPortInUse?: boole
 
     if (req.method === 'POST' && req.url === '/v1/learning/respond') {
       await handleLearningRequest(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/v1/learning/jobs') {
+      await handleLearningJobCreate(req, res);
+      return;
+    }
+
+    const learningJobMatch = req.method === 'GET' ? req.url?.match(/^\/v1\/learning\/jobs\/([^/?#]+)/) : null;
+    if (learningJobMatch?.[1]) {
+      await handleLearningJobStatus(req, res, decodeURIComponent(learningJobMatch[1]));
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/v1/coach/jobs') {
+      await handleCoachJobCreate(req, res);
+      return;
+    }
+
+    const coachJobMatch = req.method === 'GET' ? req.url?.match(/^\/v1\/coach\/jobs\/([^/?#]+)/) : null;
+    if (coachJobMatch?.[1]) {
+      await handleCoachJobStatus(req, res, decodeURIComponent(coachJobMatch[1]));
       return;
     }
 

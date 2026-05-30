@@ -105,7 +105,7 @@ export const APP_PORT = parseInt(process.env.APP_PORT || coachEnvConfig.APP_PORT
 export const CLAW_SIBLING_TOKEN = process.env.CLAW_SIBLING_TOKEN || coachEnvConfig.CLAW_SIBLING_TOKEN || '';
 export const COACH_APP_URL = process.env.COACH_APP_URL || coachEnvConfig.COACH_APP_URL || 'http://127.0.0.1:3000';
 export const COACH_FIRST_RESULT_TIMEOUT = parseInt(
-  process.env.COACH_FIRST_RESULT_TIMEOUT || coachEnvConfig.COACH_FIRST_RESULT_TIMEOUT || '180000',
+  process.env.COACH_FIRST_RESULT_TIMEOUT || coachEnvConfig.COACH_FIRST_RESULT_TIMEOUT || '600000',
   10,
 );
 export const ENABLE_COACH_AGENT =

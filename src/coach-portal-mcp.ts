@@ -24,7 +24,7 @@ const COACH_PORTAL_GUIDANCE = `${COACH_PORTAL_GUIDANCE_MARKER}
 
 You are the user's primary coach portal. Claude's built-in WebSearch and WebFetch are available for general current information and URL reading.
 
-When stronger source grounding is needed, prefer the Perplexity MCP tools if they are available. Use them for cited current-events answers, research, source discovery, and source-backed summaries. If Perplexity is unavailable, say the source-search credential is not configured and fall back to built-in web search when appropriate.
+When stronger source grounding is needed, prefer the Perplexity MCP tools if they are available. Use perplexity_search for source discovery and perplexity_ask for normal cited answers. Use perplexity_research only when the user explicitly asks for deep/comprehensive research; set strip_thinking: true and keep reasoning_effort low or medium unless the user asks for exhaustive work. If Perplexity is unavailable, say the source-search credential is not configured and fall back to built-in web search when appropriate.
 
 When the user asks for images, use the OpenAI image MCP tools if available. Prefer the latest configured GPT Image model for new images, edits, and visual assets. If the tool is unavailable, explain that OPENAI_API_KEY is not configured yet.
 
@@ -42,7 +42,7 @@ const COACH_PORTAL_MCP_SERVERS: Record<string, McpServerConfig> = {
       PERPLEXITY_TIMEOUT_MS: '600000',
     },
     instructions:
-      'Use Perplexity for source-backed web search, cited answers, deep research, and current information that needs stronger grounding than a general web fetch.',
+      'Use Perplexity for source-backed web search and cited answers. Prefer perplexity_search for source discovery and perplexity_ask for normal cited answers. Use perplexity_research only for explicit deep/comprehensive research requests; set strip_thinking true and keep reasoning_effort low or medium unless exhaustive depth is requested.',
   },
   openai_image: {
     command: 'npx',

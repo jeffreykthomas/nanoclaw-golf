@@ -5,6 +5,7 @@ import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { sanitizeTelegramLegacyMarkdown } from './telegram-markdown-sanitize.js';
 import { tryConsume } from './telegram-pairing.js';
 
 interface TelegramBotEntry {
@@ -15,6 +16,7 @@ interface TelegramBotEntry {
 const TELEGRAM_TEXT_LIMIT = 4096;
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_PHOTO_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const TELEGRAM_PARSE_MODE = 'Markdown' as const;
 
 interface TelegramRoute {
   chatId: string;
@@ -78,9 +80,17 @@ function isTelegramPhoto(filename: string): boolean {
 }
 
 async function sendTextChunks(entry: TelegramBotEntry, chatId: string, text: string): Promise<string | undefined> {
+  const sanitizedText = sanitizeTelegramLegacyMarkdown(text);
   let firstMessageId: string | undefined;
-  for (let i = 0; i < text.length; i += TELEGRAM_TEXT_LIMIT) {
-    const sent = await entry.bot.api.sendMessage(chatId, text.slice(i, i + TELEGRAM_TEXT_LIMIT));
+  for (let i = 0; i < sanitizedText.length; i += TELEGRAM_TEXT_LIMIT) {
+    const chunk = sanitizedText.slice(i, i + TELEGRAM_TEXT_LIMIT);
+    let sent;
+    try {
+      sent = await entry.bot.api.sendMessage(chatId, chunk, { parse_mode: TELEGRAM_PARSE_MODE });
+    } catch (err) {
+      log.warn('Telegram Markdown send failed; retrying as plain text', { err });
+      sent = await entry.bot.api.sendMessage(chatId, chunk);
+    }
     firstMessageId ??= String(sent.message_id);
   }
   return firstMessageId;
@@ -92,17 +102,27 @@ async function sendTelegramPayload(
   text: string,
   files: OutboundMessage['files'],
 ): Promise<string | undefined> {
-  let remainingText = text;
+  let remainingText = sanitizeTelegramLegacyMarkdown(text);
   let firstMessageId: string | undefined;
 
   for (const file of files ?? []) {
     const caption = remainingText.slice(0, TELEGRAM_CAPTION_LIMIT);
     remainingText = remainingText.slice(caption.length).trimStart();
-    const options = caption ? { caption } : undefined;
     const inputFile = new InputFile(file.data, file.filename);
-    const sent = isTelegramPhoto(file.filename)
-      ? await entry.bot.api.sendPhoto(chatId, inputFile, options)
-      : await entry.bot.api.sendDocument(chatId, inputFile, options);
+    let sent;
+    try {
+      const options = caption ? { caption, parse_mode: TELEGRAM_PARSE_MODE } : undefined;
+      sent = isTelegramPhoto(file.filename)
+        ? await entry.bot.api.sendPhoto(chatId, inputFile, options)
+        : await entry.bot.api.sendDocument(chatId, inputFile, options);
+    } catch (err) {
+      if (!caption) throw err;
+      log.warn('Telegram Markdown caption failed; retrying as plain text', { err });
+      const options = { caption };
+      sent = isTelegramPhoto(file.filename)
+        ? await entry.bot.api.sendPhoto(chatId, inputFile, options)
+        : await entry.bot.api.sendDocument(chatId, inputFile, options);
+    }
     firstMessageId ??= String(sent.message_id);
   }
 

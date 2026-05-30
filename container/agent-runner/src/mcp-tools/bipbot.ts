@@ -164,7 +164,7 @@ const createCodexJob: McpToolDefinition = {
 const enqueueLinearComment: McpToolDefinition = {
   tool: {
     name: 'bipbot_enqueue_linear_comment',
-    description: 'Queue a Linear comment through the BipBot gateway for audit trail or status updates.',
+    description: 'Queue a Linear comment through the BipBot gateway for status updates, clarifications, or replies.',
     inputSchema: {
       type: 'object',
       properties: {

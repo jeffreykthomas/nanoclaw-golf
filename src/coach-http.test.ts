@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildPrompt, type CoachRequest } from './coach-http.js';
+import { buildPrompt, extractResearchProposals, type CoachRequest } from './coach-http.js';
 
 const request: CoachRequest = {
   requestId: 'req-1',
@@ -92,5 +92,36 @@ describe('buildPrompt', () => {
 
     expect(prompt).toContain('personal coach inside Life Mode');
     expect(prompt).not.toContain('<user-profile-summary>');
+  });
+
+  it('instructs the agent to emit hidden research proposals', () => {
+    const prompt = buildPrompt(request);
+
+    expect(prompt).toContain('Research proposal behavior');
+    expect(prompt).toContain('<research-proposals>');
+    expect(prompt).toContain('Perplexity-backed learning research pipeline');
+  });
+});
+
+describe('extractResearchProposals', () => {
+  it('strips hidden proposals from user-facing text', () => {
+    const result = extractResearchProposals(
+      [
+        'Short visible reply.',
+        '<research-proposals>{"proposals":[{"title":"Putting Practice Evidence","summary":"Compare routines","prompt":"Research evidence-backed putting practice routines","targetNodeTitle":"Putting Practice","relatedTitles":["Practice Design"]}]}</research-proposals>',
+      ].join('\n'),
+    );
+
+    expect(result.text).toBe('Short visible reply.');
+    expect(result.researchProposals).toEqual([
+      {
+        title: 'Putting Practice Evidence',
+        summary: 'Compare routines',
+        prompt: 'Research evidence-backed putting practice routines',
+        targetNodeTitle: 'Putting Practice',
+        relatedTitles: ['Practice Design'],
+        artifactKind: 'research',
+      },
+    ]);
   });
 });

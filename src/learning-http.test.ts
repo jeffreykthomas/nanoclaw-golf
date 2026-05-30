@@ -19,6 +19,24 @@ describe('extractStructuredPayload', () => {
       child_topics: [],
     });
   });
+
+  it('repairs unescaped quotes inside body markdown strings', () => {
+    const payload = extractStructuredPayload(
+      [
+        '{',
+        '  "summary": "AI math result",',
+        '  "body_markdown": "The reviewer called it "a milestone" after verification.",',
+        '  "child_topics": []',
+        '}',
+      ].join('\n'),
+    );
+
+    expect(payload).toEqual({
+      summary: 'AI math result',
+      body_markdown: 'The reviewer called it "a milestone" after verification.',
+      child_topics: [],
+    });
+  });
 });
 
 describe('buildLearningPrompt', () => {

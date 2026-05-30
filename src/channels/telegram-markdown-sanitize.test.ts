@@ -75,4 +75,27 @@ describe('sanitizeTelegramLegacyMarkdown', () => {
     const input = '```\n---\n```';
     expect(sanitizeTelegramLegacyMarkdown(input)).toBe(input);
   });
+
+  it('renders Markdown tables as monospaced blocks for Telegram', () => {
+    const input =
+      '| Period | Sessions | Notes |\n' +
+      '|--------|----------|-------|\n' +
+      '| Last 90 days | ~2,950 | |\n' +
+      '| Prior 90 days | ~2,320 | |\n' +
+      '| Change | +27% | but read below |';
+
+    expect(sanitizeTelegramLegacyMarkdown(input)).toBe(
+      '```\n' +
+        'Period         Sessions  Notes\n' +
+        'Last 90 days   ~2,950\n' +
+        'Prior 90 days  ~2,320\n' +
+        'Change         +27%      but read below\n' +
+        '```',
+    );
+  });
+
+  it('does not rewrite pipe-delimited text inside fenced code blocks', () => {
+    const input = '```\n| a | b |\n|---|---|\n| c | d |\n```';
+    expect(sanitizeTelegramLegacyMarkdown(input)).toBe(input);
+  });
 });

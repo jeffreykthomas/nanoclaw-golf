@@ -26,6 +26,17 @@ export const CoachRequestSchema = z.object({
 
 export type CoachRequest = z.infer<typeof CoachRequestSchema>;
 
+export type CoachResearchProposal = {
+  id?: string;
+  title: string;
+  summary?: string;
+  prompt: string;
+  targetNodeId?: number;
+  targetNodeTitle?: string;
+  relatedTitles?: string[];
+  artifactKind?: string;
+};
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -91,6 +102,23 @@ function contextWithoutConversationHistory(context: Record<string, unknown>): Re
   return rest;
 }
 
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .map((entry) => stringValue(entry))
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
+}
+
 function contextString(context: Record<string, unknown>, key: string): string {
   const value = context[key];
   return typeof value === 'string' ? value : '';
@@ -145,6 +173,18 @@ function systemInstructions(req: CoachRequest): string[] {
   ];
 }
 
+function researchProposalInstructions(): string[] {
+  return [
+    'Research proposal behavior:',
+    '- If the current message plus conversation history reveals a question that deserves deeper source-backed research, propose it instead of doing the research in chat.',
+    '- Keep the visible reply concise. Do not include long research findings in the chat response.',
+    '- Append research proposals only in this hidden XML block after the visible answer:',
+    '<research-proposals>{"proposals":[{"title":"Short artifact title","summary":"Why this is worth researching","prompt":"The exact research brief to run later","targetNodeTitle":"Optional existing or new Learning note title","relatedTitles":["Optional related Learning note title"],"artifactKind":"research"}]}</research-proposals>',
+    '- Omit the hidden block when no deeper research job is clearly useful.',
+    '- These proposals will be accepted by the user and processed later by the Perplexity-backed learning research pipeline.',
+  ];
+}
+
 function shouldIncludeProfileSummary(req: CoachRequest): boolean {
   return !isLifeModeContext(req) || isGolfRelatedContext(req);
 }
@@ -191,6 +231,7 @@ export function buildPrompt(
     `Current date/time: ${currentDate}.`,
     'Use the current message and conversation history as the freshest context.',
     'Treat long-term profile summaries as background memory. Ignore time-sensitive profile claims unless the current message, conversation history, or recent profile context confirms they are still current.',
+    ...researchProposalInstructions(),
     '',
     `<coach-request phase="${escapeXml(req.phase)}" userId="${req.userId}">`,
     `<message>${escapeXml(req.message)}</message>`,
@@ -202,6 +243,57 @@ export function buildPrompt(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function extractResearchProposals(rawText: string): {
+  text: string;
+  researchProposals: CoachResearchProposal[];
+} {
+  const proposals: CoachResearchProposal[] = [];
+  const cleaned = rawText.replace(/<research-proposals>([\s\S]*?)<\/research-proposals>/gi, (_match, jsonText) => {
+    proposals.push(...normalizeResearchProposalsFromJson(jsonText));
+    return '';
+  });
+
+  return {
+    text: cleaned.trim(),
+    researchProposals: proposals.slice(0, 3),
+  };
+}
+
+function normalizeResearchProposalsFromJson(jsonText: string): CoachResearchProposal[] {
+  try {
+    const parsed = JSON.parse(jsonText) as unknown;
+    const rawProposals = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object'
+        ? (parsed as { proposals?: unknown }).proposals
+        : [];
+    if (!Array.isArray(rawProposals)) return [];
+
+    return rawProposals.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const raw = entry as Record<string, unknown>;
+      const title = stringValue(raw.title);
+      const prompt = stringValue(raw.prompt);
+      if (!title || !prompt) return [];
+
+      return [
+        {
+          id: stringValue(raw.id) || undefined,
+          title,
+          summary: stringValue(raw.summary) || undefined,
+          prompt,
+          targetNodeId: numberValue(raw.targetNodeId ?? raw.target_node_id),
+          targetNodeTitle: stringValue(raw.targetNodeTitle ?? raw.target_node_title) || undefined,
+          relatedTitles: stringArrayValue(raw.relatedTitles ?? raw.related_titles),
+          artifactKind: stringValue(raw.artifactKind ?? raw.artifact_kind) || 'research',
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function handleCoachRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -258,13 +350,19 @@ export async function handleCoachRequest(req: http.IncomingMessage, res: http.Se
       context: coachReq.context,
     });
 
+    const responsePayload = extractResearchProposals(result.text);
+
     log.info('Coach response sent', {
       requestId: coachReq.requestId,
       userId: coachReq.userId,
       coachSessionId: coachReq.coachSessionId,
-      responseLength: result.text.length,
+      responseLength: responsePayload.text.length,
+      researchProposalCount: responsePayload.researchProposals.length,
     });
-    jsonResponse(res, 200, { text: result.text });
+    jsonResponse(res, 200, {
+      text: responsePayload.text,
+      researchProposals: responsePayload.researchProposals,
+    });
   } catch (err) {
     log.error('Coach request failed', { requestId: coachReq.requestId, err });
     jsonResponse(res, 500, { error: 'internal_error' });

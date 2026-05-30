@@ -4,8 +4,8 @@ import path from 'path';
 
 import { z } from 'zod';
 
-import { CLAW_SIBLING_TOKEN, COACH_FIRST_RESULT_TIMEOUT } from './config.js';
-import { runAgentTask } from './agent-task-runner.js';
+import { CLAW_SIBLING_TOKEN, COACH_FIRST_RESULT_TIMEOUT, DATA_DIR } from './config.js';
+import { getAgentTaskOutput, parseOutputText, queueAgentTask, runAgentTask } from './agent-task-runner.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { log } from './log.js';
 
@@ -13,6 +13,31 @@ interface LearningGroup {
   name: string;
   folder: string;
 }
+
+type LearningJobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+interface LearningJobRecord {
+  id: string;
+  requestId: string;
+  status: LearningJobStatus;
+  taskType: z.infer<typeof LearningTaskSchema>;
+  learningNodeId: number;
+  userId: number;
+  agentGroupId: string;
+  agentGroupName: string;
+  agentGroupFolder: string;
+  sessionId: string;
+  messageId: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  failedAt?: string;
+  error?: string;
+  payload?: Record<string, unknown>;
+  rawText?: string;
+}
+
+const LEARNING_JOB_TIMEOUT_MS = 35 * 60 * 1000;
 
 const LearningTaskSchema = z.enum([
   'research_node',
@@ -102,6 +127,61 @@ function jsonResponse(res: http.ServerResponse, status: number, body: Record<str
     'Content-Length': Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+function learningJobsDir(): string {
+  const dir = path.join(DATA_DIR, 'app-learning-jobs');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function safeJobId(jobId: string): string {
+  return jobId.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function learningJobPath(jobId: string): string {
+  return path.join(learningJobsDir(), `${safeJobId(jobId)}.json`);
+}
+
+function readLearningJob(jobId: string): LearningJobRecord | null {
+  try {
+    return JSON.parse(fs.readFileSync(learningJobPath(jobId), 'utf8')) as LearningJobRecord;
+  } catch {
+    return null;
+  }
+}
+
+function writeLearningJob(job: LearningJobRecord): void {
+  fs.writeFileSync(learningJobPath(job.id), `${JSON.stringify(job, null, 2)}\n`);
+}
+
+function publicJob(job: LearningJobRecord): Record<string, unknown> {
+  return {
+    id: job.id,
+    requestId: job.requestId,
+    status: job.status,
+    taskType: job.taskType,
+    learningNodeId: job.learningNodeId,
+    userId: job.userId,
+    sessionId: job.sessionId,
+    messageId: job.messageId,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+    failedAt: job.failedAt,
+    error: job.error,
+  };
+}
+
+function markLearningJobFailed(job: LearningJobRecord, error: string): LearningJobRecord {
+  const now = new Date().toISOString();
+  return {
+    ...job,
+    status: 'failed',
+    error,
+    failedAt: now,
+    updatedAt: now,
+  };
 }
 
 function ensureAuthorized(req: http.IncomingMessage, res: http.ServerResponse): boolean {
@@ -232,7 +312,29 @@ export function extractStructuredPayload(rawText: string): Record<string, unknow
   const objectMatch = candidate.match(/\{[\s\S]*\}/);
   const jsonText = objectMatch ? objectMatch[0] : candidate;
 
-  return JSON.parse(jsonText) as Record<string, unknown>;
+  try {
+    return JSON.parse(jsonText) as Record<string, unknown>;
+  } catch (error) {
+    const repaired = escapeUnescapedQuotesInStringField(jsonText, 'body_markdown', 'child_topics');
+    if (repaired !== jsonText) {
+      return JSON.parse(repaired) as Record<string, unknown>;
+    }
+    throw error;
+  }
+}
+
+function escapeUnescapedQuotesInStringField(jsonText: string, fieldName: string, nextFieldName: string): string {
+  const fieldMatch = new RegExp(`"${fieldName}"\\s*:\\s*"`).exec(jsonText);
+  if (!fieldMatch) return jsonText;
+
+  const valueStart = fieldMatch.index + fieldMatch[0].length;
+  const nextFieldMatch = new RegExp(`",\\s*"${nextFieldName}"\\s*:`).exec(jsonText.slice(valueStart));
+  if (!nextFieldMatch) return jsonText;
+
+  const valueEnd = valueStart + nextFieldMatch.index;
+  const originalValue = jsonText.slice(valueStart, valueEnd);
+  const repairedValue = originalValue.replace(/(^|[^\\])"/g, '$1\\"');
+  return `${jsonText.slice(0, valueStart)}${repairedValue}${jsonText.slice(valueEnd)}`;
 }
 
 export function buildLearningPrompt(req: LearningRequest): string {
@@ -241,6 +343,7 @@ export function buildLearningPrompt(req: LearningRequest): string {
     'Read the files in /workspace/group for the current topic context before responding.',
     'Prefer authoritative sources and explicit uncertainty over hand-wavy filler.',
     'Return valid JSON only. Do not wrap the response in markdown fences.',
+    'The response must parse with JSON.parse. Escape every double quote inside string values as \\".',
     '',
     `Topic: ${req.node.title}`,
     `Task: ${req.taskType}`,
@@ -255,6 +358,7 @@ export function buildLearningPrompt(req: LearningRequest): string {
         'Find a small set of strong sources, summarize each one, and then compile the topic into an organizing note.',
         'Prefer fewer high-quality sources over many weak ones.',
         'Use an Obsidian-like note structure and a gbrain-like pattern of current understanding plus evidence trail.',
+        'When writing markdown inside JSON strings, prefer single quotes for quoted phrases to avoid invalid JSON.',
         '',
         'Return JSON:',
         '{',
@@ -368,6 +472,225 @@ export function buildLearningPrompt(req: LearningRequest): string {
     default:
       return sharedContext;
   }
+}
+
+async function respondWithLearningJobStatus(record: LearningJobRecord, res: http.ServerResponse): Promise<void> {
+  let job = record;
+
+  if (job.status === 'completed' && job.payload) {
+    jsonResponse(res, 200, {
+      status: job.status,
+      job: publicJob(job),
+      payload: job.payload,
+      rawText: job.rawText,
+      sessionId: job.sessionId,
+    });
+    return;
+  }
+
+  if (job.status === 'failed') {
+    jsonResponse(res, 200, {
+      status: job.status,
+      job: publicJob(job),
+      error: job.error,
+    });
+    return;
+  }
+
+  const rawMessage = getAgentTaskOutput(job.agentGroupId, job.sessionId, job.messageId);
+  if (!rawMessage) {
+    const elapsedMs = Date.now() - Date.parse(job.createdAt);
+    if (elapsedMs > LEARNING_JOB_TIMEOUT_MS) {
+      job = markLearningJobFailed(job, `learning_job_timeout:${job.messageId}`);
+      writeLearningJob(job);
+      log.error('Learning job timed out', {
+        requestId: job.requestId,
+        taskType: job.taskType,
+        learningNodeId: job.learningNodeId,
+        userId: job.userId,
+        messageId: job.messageId,
+      });
+      jsonResponse(res, 200, {
+        status: job.status,
+        job: publicJob(job),
+        error: job.error,
+      });
+      return;
+    }
+
+    if (job.status === 'queued') {
+      job = {
+        ...job,
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+      };
+      writeLearningJob(job);
+    }
+
+    jsonResponse(res, 200, {
+      status: job.status,
+      job: publicJob(job),
+    });
+    return;
+  }
+
+  const rawText = parseOutputText(rawMessage.content);
+  try {
+    const payload = extractStructuredPayload(rawText);
+    if (!payload) {
+      throw new Error('structured_payload_parse_failed');
+    }
+
+    const now = new Date().toISOString();
+    job = {
+      ...job,
+      status: 'completed',
+      payload,
+      rawText,
+      completedAt: now,
+      updatedAt: now,
+    };
+    writeLearningJob(job);
+    log.info('Learning job completed', {
+      requestId: job.requestId,
+      taskType: job.taskType,
+      learningNodeId: job.learningNodeId,
+      userId: job.userId,
+    });
+
+    jsonResponse(res, 200, {
+      status: job.status,
+      job: publicJob(job),
+      payload,
+      rawText,
+      sessionId: job.sessionId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'structured_payload_parse_failed';
+    job = markLearningJobFailed(job, message);
+    writeLearningJob(job);
+    log.error('Learning job failed', {
+      requestId: job.requestId,
+      taskType: job.taskType,
+      learningNodeId: job.learningNodeId,
+      userId: job.userId,
+      error,
+    });
+
+    jsonResponse(res, 200, {
+      status: job.status,
+      job: publicJob(job),
+      error: job.error,
+    });
+  }
+}
+
+export async function handleLearningJobCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (!ensureAuthorized(req, res)) {
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = await parseJsonBody(req);
+  } catch {
+    jsonResponse(res, 400, { error: 'invalid_json' });
+    return;
+  }
+
+  const parsed = LearningRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    jsonResponse(res, 400, {
+      error: 'validation_error',
+      details: parsed.error.issues,
+    });
+    return;
+  }
+
+  const learningReq = parsed.data;
+  if (learningReq.transport !== 'app') {
+    jsonResponse(res, 400, { error: 'unsupported_transport' });
+    return;
+  }
+
+  const existing = readLearningJob(learningReq.requestId);
+  if (existing) {
+    await respondWithLearningJobStatus(existing, res);
+    return;
+  }
+
+  try {
+    const group = getLearningGroup(learningReq.userId, learningReq.learningNodeId);
+    writeLearningWorkspaceFiles(group, learningReq);
+
+    const queued = await queueAgentTask({
+      folder: group.folder,
+      name: group.name,
+      prompt: buildLearningPrompt(learningReq),
+      timeoutMs: COACH_FIRST_RESULT_TIMEOUT,
+      channelType: 'internal-learning',
+      platformId: `learning:${learningReq.learningNodeId}`,
+    });
+
+    const now = new Date().toISOString();
+    const job: LearningJobRecord = {
+      id: learningReq.requestId,
+      requestId: learningReq.requestId,
+      status: 'queued',
+      taskType: learningReq.taskType,
+      learningNodeId: learningReq.learningNodeId,
+      userId: learningReq.userId,
+      agentGroupId: queued.agentGroup.id,
+      agentGroupName: queued.agentGroup.name,
+      agentGroupFolder: queued.agentGroup.folder,
+      sessionId: queued.sessionId,
+      messageId: queued.messageId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeLearningJob(job);
+
+    log.info('Learning job queued', {
+      requestId: job.requestId,
+      taskType: job.taskType,
+      learningNodeId: job.learningNodeId,
+      userId: job.userId,
+      sessionId: job.sessionId,
+      messageId: job.messageId,
+    });
+
+    jsonResponse(res, 202, {
+      status: job.status,
+      job: publicJob(job),
+    });
+  } catch (error) {
+    log.error('Learning job queue failed', {
+      requestId: learningReq.requestId,
+      taskType: learningReq.taskType,
+      learningNodeId: learningReq.learningNodeId,
+      userId: learningReq.userId,
+      error,
+    });
+    jsonResponse(res, 500, { error: 'internal_error' });
+  }
+}
+
+export async function handleLearningJobStatus(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  jobId: string,
+): Promise<void> {
+  if (!ensureAuthorized(req, res)) {
+    return;
+  }
+
+  const job = readLearningJob(jobId);
+  if (!job) {
+    jsonResponse(res, 404, { error: 'not_found' });
+    return;
+  }
+
+  await respondWithLearningJobStatus(job, res);
 }
 
 export async function handleLearningRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

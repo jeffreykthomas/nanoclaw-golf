@@ -6,15 +6,23 @@ import { extractBipbotTargetBranch } from './bipbot-branch.js';
 import { BIPBOT_INGRESS_POLL_INTERVAL } from './config.js';
 import { log } from './log.js';
 
+export interface BipbotGithubTarget {
+  prUrl: string | null;
+  updatePr: boolean;
+}
+
 export interface BipbotIngressEvent {
   docId: string;
   jobId: string;
   issueId: string;
   issueUrl: string;
+  sourceCommentId: string | null;
+  sourceUrl: string | null;
   repoUrl: string | null;
   branch: string | null;
   prompt: string;
   sourceType: string;
+  github?: BipbotGithubTarget;
   actor?: Record<string, unknown>;
 }
 
@@ -23,6 +31,20 @@ export interface BipbotIngressPollerDeps {
 }
 
 let pollerRunning = false;
+
+function getString(data: Record<string, unknown>, key: string): string | null {
+  const value = data[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getGithubTarget(data: Record<string, unknown>): BipbotGithubTarget | undefined {
+  const value = data.github;
+  if (!value || typeof value !== 'object') return undefined;
+  const github = value as Record<string, unknown>;
+  const prUrl = getString(github, 'prUrl');
+  const updatePr = github.updatePr === true;
+  return prUrl || updatePr ? { prUrl, updatePr } : undefined;
+}
 
 export async function startBipbotIngressPoller(
   serviceAccountPath: string,
@@ -87,21 +109,21 @@ export async function startBipbotIngressPoller(
 
           const data = doc.data();
           const prompt = String(data.prompt || '');
-          const explicitBranch = typeof data.branch === 'string' && data.branch.trim() ? data.branch.trim() : null;
+          const explicitBranch = getString(data, 'branch') || getString(data, 'baseBranch');
+          const issueUrl = getString(data, 'issueUrl') ?? '';
+          const sourceUrl = getString(data, 'sourceUrl') || issueUrl || null;
           const event: BipbotIngressEvent = {
             docId: doc.id,
             jobId: String(data.jobId || doc.id),
             issueId: String(data.issueId || doc.id),
-            issueUrl: String(data.issueUrl || ''),
-            repoUrl:
-              typeof data.repoUrl === 'string' && data.repoUrl.trim()
-                ? data.repoUrl.trim()
-                : typeof data.repositoryUrl === 'string' && data.repositoryUrl.trim()
-                  ? data.repositoryUrl.trim()
-                  : null,
+            issueUrl,
+            sourceCommentId: getString(data, 'sourceCommentId'),
+            sourceUrl,
+            repoUrl: getString(data, 'repoUrl') || getString(data, 'repositoryUrl'),
             branch: explicitBranch || extractBipbotTargetBranch(prompt),
             prompt,
             sourceType: String(data.sourceType || 'bipbot'),
+            github: getGithubTarget(data),
             actor: data.actor && typeof data.actor === 'object' ? (data.actor as Record<string, unknown>) : undefined,
           };
 
