@@ -46,7 +46,7 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', () 
   it('handles the no-destination case without crashing', () => {
     const prompt = buildSystemPromptAddendum('Casa');
 
-    expect(prompt).toContain('no configured destinations');
+    expect(prompt).toContain('Reply to the current conversation');
     expect(prompt).not.toContain('default to addressing');
   });
 

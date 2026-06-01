@@ -2,7 +2,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { GROUPS_DIR } from './config.js';
-import { updateContainerConfig, type ContainerConfig, type McpServerConfig } from './container-config.js';
+import { configFromDb, type ContainerConfig, type McpServerConfig } from './container-config.js';
+import { getAgentGroupByFolder } from './db/agent-groups.js';
+import { ensureContainerConfig, getContainerConfig, updateContainerConfigJson } from './db/container-configs.js';
 
 export const COACH_PORTAL_ENV_VARS = [
   'PERPLEXITY_API_KEY',
@@ -70,20 +72,29 @@ export function isCoachPortalFolder(folder: string): boolean {
 }
 
 export function applyCoachPortalMcpConfig(folder: string): ContainerConfig {
-  return updateContainerConfig(folder, (config) => {
-    config.mcpServers = config.mcpServers ?? {};
-    for (const [name, template] of Object.entries(COACH_PORTAL_MCP_SERVERS)) {
-      const existing = config.mcpServers[name];
-      config.mcpServers[name] = existing
-        ? {
-            ...template,
-            ...existing,
-            env: { ...template.env, ...existing.env },
-            instructions: existing.instructions || template.instructions,
-          }
-        : template;
-    }
-  });
+  const group = getAgentGroupByFolder(folder);
+  if (!group) throw new Error(`Agent group not found for folder: ${folder}`);
+
+  ensureContainerConfig(group.id);
+  const row = getContainerConfig(group.id);
+  if (!row) throw new Error(`Container config not found for agent group: ${group.id}`);
+
+  const config = configFromDb(row, group);
+  const mcpServers = { ...config.mcpServers };
+  for (const [name, template] of Object.entries(COACH_PORTAL_MCP_SERVERS)) {
+    const existing = mcpServers[name];
+    mcpServers[name] = existing
+      ? {
+          ...template,
+          ...existing,
+          env: { ...template.env, ...existing.env },
+          instructions: existing.instructions || template.instructions,
+        }
+      : template;
+  }
+
+  updateContainerConfigJson(group.id, 'mcp_servers', mcpServers);
+  return { ...config, mcpServers };
 }
 
 export function ensureCoachPortalGuidance(folder: string, title: string): void {
