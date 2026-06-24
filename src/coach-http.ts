@@ -33,6 +33,7 @@ export type CoachResearchProposal = {
   prompt: string;
   targetNodeId?: number;
   targetNodeTitle?: string;
+  parentTitle?: string;
   relatedTitles?: string[];
   artifactKind?: string;
 };
@@ -179,7 +180,8 @@ function researchProposalInstructions(): string[] {
     '- If the current message plus conversation history reveals a question that deserves deeper source-backed research, propose it instead of doing the research in chat.',
     '- Keep the visible reply concise. Do not include long research findings in the chat response.',
     '- Append research proposals only in this hidden XML block after the visible answer:',
-    '<research-proposals>{"proposals":[{"title":"Short artifact title","summary":"Why this is worth researching","prompt":"The exact research brief to run later","targetNodeTitle":"Optional existing or new Learning note title","relatedTitles":["Optional related Learning note title"],"artifactKind":"research"}]}</research-proposals>',
+    '<research-proposals>{"proposals":[{"title":"Short artifact title","summary":"Why this is worth researching","prompt":"The exact research brief to run later","targetNodeTitle":"Optional existing or new Learning note title","parentTitle":"Optional existing Learning topic to file this under","relatedTitles":["Optional related Learning note title"],"artifactKind":"research"}]}</research-proposals>',
+    '- The context may include learning_vault_outline listing the user\'s existing Learning topics as "Root > child | child" lines. Use it for placement: if the research extends an existing topic, set targetNodeTitle to that exact title; otherwise set parentTitle to the most closely related existing topic so the new note nests under it. Only omit parentTitle when the research genuinely starts a brand-new top-level area.',
     '- Omit the hidden block when no deeper research job is clearly useful.',
     '- These proposals will be accepted by the user and processed later by the Perplexity-backed learning research pipeline.',
   ];
@@ -286,6 +288,7 @@ function normalizeResearchProposalsFromJson(jsonText: string): CoachResearchProp
           prompt,
           targetNodeId: numberValue(raw.targetNodeId ?? raw.target_node_id),
           targetNodeTitle: stringValue(raw.targetNodeTitle ?? raw.target_node_title) || undefined,
+          parentTitle: stringValue(raw.parentTitle ?? raw.parent_title) || undefined,
           relatedTitles: stringArrayValue(raw.relatedTitles ?? raw.related_titles),
           artifactKind: stringValue(raw.artifactKind ?? raw.artifact_kind) || 'research',
         },

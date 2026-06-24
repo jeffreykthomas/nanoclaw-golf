@@ -4,7 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { isCorruptionError } from './poll-loop.js';
+import { dispatchResultText, isCorruptionError } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -376,6 +376,26 @@ describe('end-to-end with mock provider', () => {
     expect(outMessages).toHaveLength(1);
     expect(JSON.parse(outMessages[0].content).text).toBe('The answer is 4');
     expect(outMessages[0].in_reply_to).toBe('m1');
+  });
+});
+
+describe('dispatchResultText', () => {
+  it('writes direct replies when no destinations are configured', () => {
+    const result = dispatchResultText('<message to="coach">Direct coach response</message>', {
+      platformId: 'coach:2',
+      channelType: 'internal-coach',
+      threadId: null,
+      inReplyTo: 'task-1',
+    });
+
+    expect(result).toEqual({ sent: 1, hasUnwrapped: false });
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    expect(JSON.parse(outMessages[0].content).text).toBe('Direct coach response');
+    expect(outMessages[0].platform_id).toBe('coach:2');
+    expect(outMessages[0].channel_type).toBe('internal-coach');
+    expect(outMessages[0].in_reply_to).toBe('task-1');
   });
 });
 

@@ -67,6 +67,7 @@ const MENTORS_OPERATIONAL_ENV_VARS = [
   'GOOGLE_ADS_LOGIN_CUSTOMER_ID',
   'GA4_PROPERTY_ID',
   'ELEVENLABS_API_KEY',
+  'OPENAI_API_KEY',
 ];
 const COACH_AGENT_GROUP_ID = 'agent-coach-2';
 const COACH_DRIVE_ENV_VARS = [
@@ -81,6 +82,7 @@ const BIPBOT_CONTAINER_ENV_VARS = [
   { source: 'BIPBOT_GOOGLE_DRIVE_WRITE_FOLDER_ID', target: 'GOOGLE_DRIVE_WRITE_FOLDER_ID' },
   { source: 'LINEAR_API_KEY', target: 'LINEAR_API_KEY' },
   { source: 'GITHUB_TOKEN', target: 'GITHUB_TOKEN' },
+  { source: 'GITHUB_TOKEN', target: 'GH_TOKEN' },
 ];
 
 /** Active containers tracked by session ID. */

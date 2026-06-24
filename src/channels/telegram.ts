@@ -11,12 +11,61 @@ import { tryConsume } from './telegram-pairing.js';
 interface TelegramBotEntry {
   bot: Bot;
   username: string;
+  token: string;
 }
 
 const TELEGRAM_TEXT_LIMIT = 4096;
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_PHOTO_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const TELEGRAM_PARSE_MODE = 'Markdown' as const;
+
+interface TelegramEntity {
+  type: string;
+  offset: number;
+  length: number;
+  user?: { id?: number };
+}
+
+interface TelegramMediaFile {
+  file_id: string;
+  file_name?: string;
+  file_size?: number;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+  is_animated?: boolean;
+  is_video?: boolean;
+}
+
+interface TelegramMessageLike {
+  message_id: number;
+  date: number;
+  text?: string;
+  caption?: string;
+  entities?: TelegramEntity[];
+  caption_entities?: TelegramEntity[];
+  reply_to_message?: { from?: { id?: number } };
+  photo?: TelegramMediaFile[];
+  document?: TelegramMediaFile;
+  video?: TelegramMediaFile;
+  animation?: TelegramMediaFile;
+  audio?: TelegramMediaFile;
+  voice?: TelegramMediaFile;
+  sticker?: TelegramMediaFile;
+  video_note?: TelegramMediaFile;
+}
+
+interface TelegramInboundAttachment {
+  type: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  width?: number;
+  height?: number;
+  data?: string;
+}
+
+type TelegramFileDownloader = (fileId: string) => Promise<Buffer>;
 
 interface TelegramRoute {
   chatId: string;
@@ -77,6 +126,135 @@ function extractText(message: OutboundMessage): string | null {
 
 function isTelegramPhoto(filename: string): boolean {
   return TELEGRAM_PHOTO_EXTENSIONS.has(filename.toLowerCase().match(/\.[^.]+$/)?.[0] ?? '');
+}
+
+export function extractTelegramText(message: TelegramMessageLike): string {
+  return message.text ?? message.caption ?? '';
+}
+
+function attachmentMetadata(
+  type: string,
+  file: TelegramMediaFile,
+  name?: string,
+  mimeType?: string,
+): TelegramInboundAttachment {
+  const attachment: TelegramInboundAttachment = { type };
+  if (name) attachment.name = name;
+  if (mimeType) attachment.mimeType = mimeType;
+  if (typeof file.file_size === 'number') attachment.size = file.file_size;
+  if (typeof file.width === 'number') attachment.width = file.width;
+  if (typeof file.height === 'number') attachment.height = file.height;
+  return attachment;
+}
+
+function largestPhoto(photos: TelegramMediaFile[]): TelegramMediaFile | undefined {
+  return photos.reduce<TelegramMediaFile | undefined>((best, photo) => {
+    if (!best) return photo;
+    const bestScore = best.file_size ?? (best.width ?? 0) * (best.height ?? 0);
+    const score = photo.file_size ?? (photo.width ?? 0) * (photo.height ?? 0);
+    return score > bestScore ? photo : best;
+  }, undefined);
+}
+
+export function collectTelegramMedia(
+  message: TelegramMessageLike,
+): Array<{ type: string; file: TelegramMediaFile; meta: TelegramInboundAttachment }> {
+  const media: Array<{ type: string; file: TelegramMediaFile; meta: TelegramInboundAttachment }> = [];
+
+  const photo = message.photo ? largestPhoto(message.photo) : undefined;
+  if (photo)
+    media.push({ type: 'photo', file: photo, meta: attachmentMetadata('photo', photo, undefined, 'image/jpeg') });
+  if (message.document) {
+    media.push({
+      type: 'document',
+      file: message.document,
+      meta: attachmentMetadata('document', message.document, message.document.file_name, message.document.mime_type),
+    });
+  }
+  if (message.video) {
+    media.push({
+      type: 'video',
+      file: message.video,
+      meta: attachmentMetadata('video', message.video, message.video.file_name, message.video.mime_type ?? 'video/mp4'),
+    });
+  }
+  if (message.animation) {
+    media.push({
+      type: 'animation',
+      file: message.animation,
+      meta: attachmentMetadata(
+        'animation',
+        message.animation,
+        message.animation.file_name,
+        message.animation.mime_type ?? 'video/mp4',
+      ),
+    });
+  }
+  if (message.audio) {
+    media.push({
+      type: 'audio',
+      file: message.audio,
+      meta: attachmentMetadata('audio', message.audio, message.audio.file_name, message.audio.mime_type),
+    });
+  }
+  if (message.voice) {
+    media.push({
+      type: 'voice',
+      file: message.voice,
+      meta: attachmentMetadata('voice', message.voice, undefined, message.voice.mime_type ?? 'audio/ogg'),
+    });
+  }
+  if (message.sticker) {
+    const mimeType = message.sticker.is_video
+      ? 'video/webm'
+      : message.sticker.is_animated
+        ? 'application/x-tgsticker'
+        : 'image/webp';
+    media.push({
+      type: 'sticker',
+      file: message.sticker,
+      meta: attachmentMetadata('sticker', message.sticker, undefined, mimeType),
+    });
+  }
+  if (message.video_note) {
+    media.push({
+      type: 'video',
+      file: message.video_note,
+      meta: attachmentMetadata('video', message.video_note, undefined, 'video/mp4'),
+    });
+  }
+
+  return media;
+}
+
+export async function extractTelegramAttachments(
+  message: TelegramMessageLike,
+  downloadFile: TelegramFileDownloader,
+): Promise<TelegramInboundAttachment[]> {
+  const attachments: TelegramInboundAttachment[] = [];
+  for (const item of collectTelegramMedia(message)) {
+    const attachment = { ...item.meta };
+    // Keep the message routable even if Telegram media download fails.
+    /* eslint-disable no-catch-all/no-catch-all */
+    try {
+      const buffer = await downloadFile(item.file.file_id);
+      attachment.data = buffer.toString('base64');
+    } catch (err) {
+      log.warn('Failed to download Telegram attachment', { type: item.type, err });
+    }
+    /* eslint-enable no-catch-all/no-catch-all */
+    attachments.push(attachment);
+  }
+  return attachments;
+}
+
+async function downloadTelegramFile(entry: TelegramBotEntry, fileId: string): Promise<Buffer> {
+  const file = await entry.bot.api.getFile(fileId);
+  if (!file.file_path) throw new Error('telegram_file_path_missing');
+
+  const response = await fetch(`https://api.telegram.org/file/bot${entry.token}/${file.file_path}`);
+  if (!response.ok) throw new Error(`telegram_file_download_failed_${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function sendTextChunks(entry: TelegramBotEntry, chatId: string, text: string): Promise<string | undefined> {
@@ -174,19 +352,32 @@ function createAdapter(tokens: string[]): ChannelAdapter {
       await ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
-    bot.on('message:text', async (ctx) => {
-      if (!setup || ctx.message.text.startsWith('/')) return;
+    bot.on('message', async (ctx) => {
+      if (!setup) return;
 
       const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
       const platformId = platformIdFor(ctx.chat.id, username, isGroup);
       const senderId = ctx.from?.id ? `telegram:${ctx.from.id}` : undefined;
       const sender =
         ctx.from?.first_name || ctx.from?.username || (ctx.from?.id ? String(ctx.from.id) : undefined) || 'Unknown';
-      const text = ctx.message.text;
+      const message = ctx.message as TelegramMessageLike;
+      const text = extractTelegramText(message);
+      if (text.startsWith('/')) return;
+      const attachments = await extractTelegramAttachments(message, (fileId) =>
+        downloadTelegramFile({ bot, username, token }, fileId),
+      );
+      if (!text && attachments.length === 0) return;
+
       const chatName = ctx.chat.type === 'private' ? sender : 'title' in ctx.chat ? ctx.chat.title : platformId;
       const isMention =
         !isGroup ||
-        isMentioned(text, username, me.id, ctx.message.entities, ctx.message.reply_to_message?.from?.id === me.id);
+        isMentioned(
+          text,
+          username,
+          me.id,
+          message.entities ?? message.caption_entities,
+          message.reply_to_message?.from?.id === me.id,
+        );
 
       const consumedPairing = await tryConsume({
         text,
@@ -200,30 +391,32 @@ function createAdapter(tokens: string[]): ChannelAdapter {
 
       log.info('Telegram inbound message received', {
         platformId,
-        messageId: ctx.message.message_id,
+        messageId: message.message_id,
         isGroup,
         isMention,
-        entityTypes: ctx.message.entities?.map((entity) => entity.type) ?? [],
-        isReplyToBot: ctx.message.reply_to_message?.from?.id === me.id,
+        entityTypes: (message.entities ?? message.caption_entities)?.map((entity) => entity.type) ?? [],
+        isReplyToBot: message.reply_to_message?.from?.id === me.id,
+        attachmentCount: attachments.length,
       });
       setup.onMetadata(platformId, chatName, isGroup);
 
       const inbound: InboundMessage = {
-        id: String(ctx.message.message_id),
+        id: String(message.message_id),
         kind: 'chat',
-        timestamp: new Date(ctx.message.date * 1000).toISOString(),
+        timestamp: new Date(message.date * 1000).toISOString(),
         isMention,
         isGroup,
         content: {
           text,
           sender,
           senderId,
+          ...(attachments.length > 0 ? { attachments } : {}),
         },
       };
       await setup.onInbound(platformId, null, inbound);
     });
 
-    bots.push({ bot, username });
+    bots.push({ bot, username, token });
     void bot
       .start({
         drop_pending_updates: true,

@@ -1,4 +1,5 @@
 import { createAgentGroup, getAgentGroupByFolder } from './db/agent-groups.js';
+import { ensureContainerConfig } from './db/container-configs.js';
 import { getDueOutboundMessages } from './db/session-db.js';
 import { resolveSession, openOutboundDb, writeSessionMessage } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
@@ -50,6 +51,9 @@ function ensureAgentGroup(folder: string, name: string): AgentGroup {
     created_at: now,
   };
   createAgentGroup(group);
+  // Without a container_configs row, wakeContainer → materializeContainerJson
+  // throws and the session can never spawn until a host restart backfills it.
+  ensureContainerConfig(group.id);
   return group;
 }
 

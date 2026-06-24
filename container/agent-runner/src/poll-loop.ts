@@ -303,6 +303,7 @@ async function processQuery(
   let queryContinuation: string | undefined;
   let done = false;
   let unwrappedNudged = false;
+  const resultRoutingQueue: RoutingContext[] = [routing];
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
   // We do NOT force-end the stream on silence — keeping the query open avoids
@@ -375,9 +376,12 @@ async function processQuery(
         if (done) return;
 
         const keptIds = keep.map((m) => m.id);
+        const followUpRouting = extractRouting(keep);
         const prompt = formatMessages(keep);
         log(`Pushing ${keep.length} follow-up message(s) into active query`);
         unwrappedNudged = false;
+        resultRoutingQueue.push(followUpRouting);
+        setCurrentInReplyTo(followUpRouting.inReplyTo);
         query.push(prompt);
         markCompleted(keptIds);
       } catch (err) {
@@ -433,6 +437,7 @@ async function processQuery(
         // Claude session with no prior context.
         setContinuation(providerName, event.continuation);
       } else if (event.type === 'result') {
+        const eventRouting = resultRoutingQueue.shift() ?? routing;
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for
@@ -441,11 +446,12 @@ async function processQuery(
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
         if (event.text) {
-          const { hasUnwrapped } = dispatchResultText(event.text, routing);
+          const { hasUnwrapped } = dispatchResultText(event.text, eventRouting);
           if (hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
             const destinations = getAllDestinations();
             const names = destinations.map((d) => d.name).join(', ');
+            resultRoutingQueue.push(eventRouting);
             query.push(
               `<system>Your response was not delivered — it was not wrapped in <message to="name">...</message> blocks. ` +
                 `All output must be wrapped: use <message to="name"> for content to send, or <internal> for scratchpad. ` +
@@ -491,8 +497,26 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
  * The agent must always wrap output in <message to="name">...</message>
  * blocks, even with a single destination. Bare text is scratchpad only.
  */
-function dispatchResultText(text: string, routing: RoutingContext): { sent: number; hasUnwrapped: boolean } {
+export function dispatchResultText(text: string, routing: RoutingContext): { sent: number; hasUnwrapped: boolean } {
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+  const destinations = getAllDestinations();
+
+  if (destinations.length === 0) {
+    const body = directReplyText(text);
+    if (body) {
+      writeMessageOut({
+        id: generateId(),
+        in_reply_to: routing.inReplyTo,
+        kind: 'chat',
+        platform_id: routing.platformId,
+        channel_type: routing.channelType,
+        thread_id: routing.threadId,
+        content: JSON.stringify({ text: body }),
+      });
+      return { sent: 1, hasUnwrapped: false };
+    }
+    return { sent: 0, hasUnwrapped: false };
+  }
 
   let match: RegExpExecArray | null;
   let sent = 0;
@@ -531,6 +555,19 @@ function dispatchResultText(text: string, routing: RoutingContext): { sent: numb
     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
   }
   return { sent, hasUnwrapped };
+}
+
+function directReplyText(text: string): string {
+  const MESSAGE_RE = /<message\s+to="[^"]+"\s*>([\s\S]*?)<\/message>/g;
+  const bodies: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = MESSAGE_RE.exec(text)) !== null) {
+    const body = stripInternalTags(match[1]).trim();
+    if (body) bodies.push(body);
+  }
+
+  if (bodies.length > 0) return bodies.join('\n\n');
+  return stripInternalTags(text).trim();
 }
 
 function sendToDestination(dest: DestinationEntry, body: string, routing: RoutingContext): void {
