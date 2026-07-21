@@ -65,6 +65,17 @@ export function initGroupFilesystem(group: AgentGroup, opts?: { instructions?: s
     initialized.push('CLAUDE.local.md');
   }
 
+  // groups/<folder>/.claude/skills/ — per-group agent-authored skills,
+  // discovered by the Claude SDK as project skills (cwd is /workspace/agent).
+  // Must exist before the session starts: Claude Code only initializes its
+  // skill file-watcher for top-level skills dirs present at startup, so
+  // pre-creating it is what makes mid-session skill creation/edits hot-reload.
+  const groupSkillsDir = path.join(groupDir, '.claude', 'skills');
+  if (!fs.existsSync(groupSkillsDir)) {
+    fs.mkdirSync(groupSkillsDir, { recursive: true });
+    initialized.push('.claude/skills/');
+  }
+
   // Ensure container_configs row exists in the DB. Idempotent — no-op if
   // the row already exists (e.g. created by backfill or group creation).
   ensureContainerConfig(group.id);
