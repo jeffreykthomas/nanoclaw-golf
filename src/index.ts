@@ -12,6 +12,7 @@ import { startAppBridgeRuntime } from './app-server.js';
 import { startBipbotGatewayIpcPoller, stopBipbotGatewayIpcPoller } from './bipbot-gateway-ipc.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
+import { cleanupContainerSecretFiles } from './container-secrets.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
   // 2. Container runtime
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+  cleanupContainerSecretFiles();
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {

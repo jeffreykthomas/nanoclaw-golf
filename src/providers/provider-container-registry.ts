@@ -34,7 +34,7 @@ export interface ProviderContainerContext {
 export interface ProviderContainerContribution {
   /** Extra volume mounts (merged with the default session/group/agent-runner mounts). */
   mounts?: VolumeMount[];
-  /** Extra env vars to pass to the container (`-e KEY=VALUE`). */
+  /** Extra env vars to load from the container's read-only secret bundle. */
   env?: Record<string, string>;
 }
 

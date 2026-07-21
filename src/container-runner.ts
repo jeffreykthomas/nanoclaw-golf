@@ -19,9 +19,15 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
+import {
+  CONTAINER_SECRET_MOUNT_PATH,
+  extractContainerEnvironmentArgs,
+  removeContainerSecretFile,
+  writeContainerSecretFile,
+} from './container-secrets.js';
 import { materializeContainerJson } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
-import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
+import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { COACH_PORTAL_ENV_VARS, isCoachPortalFolder } from './coach-portal-mcp.js';
@@ -172,7 +178,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
   const agentIdentifier = agentGroup.id;
-  const args = await buildContainerArgs(
+  const { args, secretFilePath } = await buildContainerArgs(
     mounts,
     containerName,
     agentGroup,
@@ -188,9 +194,14 @@ async function spawnContainer(session: Session): Promise<void> {
   // sweep's ceiling check treats a missing file as "fresh spawn, give grace"
   // (host-sweep.ts line 87). Without this, the stale mtime can trigger an
   // immediate kill before the new container touches the file itself.
-  fs.rmSync(heartbeatPath(agentGroup.id, session.id), { force: true });
-
-  const container = spawn(CONTAINER_RUNTIME_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let container: ChildProcess;
+  try {
+    fs.rmSync(heartbeatPath(agentGroup.id, session.id), { force: true });
+    container = spawn(CONTAINER_RUNTIME_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    removeContainerSecretFile(secretFilePath);
+    throw error;
+  }
 
   activeContainers.set(session.id, { process: container, containerName });
   markContainerRunning(session.id);
@@ -211,6 +222,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // on a wall-clock timer.
 
   container.on('close', (code) => {
+    removeContainerSecretFile(secretFilePath);
     activeContainers.delete(session.id);
     markContainerStopped(session.id);
     stopTypingRefresh(session.id);
@@ -218,6 +230,7 @@ async function spawnContainer(session: Session): Promise<void> {
   });
 
   container.on('error', (err) => {
+    removeContainerSecretFile(secretFilePath);
     activeContainers.delete(session.id);
     markContainerStopped(session.id);
     stopTypingRefresh(session.id);
@@ -445,16 +458,15 @@ async function buildContainerArgs(
   provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
-): Promise<string[]> {
-  const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
+): Promise<{ args: string[]; secretFilePath: string | null }> {
+  let args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
+  const secretEnv: Record<string, string> = {};
 
-  // Environment — only vars read by code we don't own.
-  // Everything NanoClaw-specific is in container.json (read by runner at startup).
-  args.push('-e', `TZ=${TIMEZONE}`);
-
+  // Environment read by code we don't own. Values are collected into a
+  // read-only secret file below rather than exposed through Docker argv.
   const forwardedEnvVars = readEnvFile(['ARCCOS_EMAIL', 'ARCCOS_PASSWORD']);
   for (const [key, value] of Object.entries(forwardedEnvVars)) {
-    args.push('-e', `${key}=${value}`);
+    secretEnv[key] = value;
   }
 
   if (agentGroup.id === MENTORS_AGENT_GROUP_ID) {
@@ -462,7 +474,7 @@ async function buildContainerArgs(
     for (const key of MENTORS_OPERATIONAL_ENV_VARS) {
       const value = process.env[key] || mentorsEnvVars[key];
       if (value) {
-        args.push('-e', `${key}=${value}`);
+        secretEnv[key] = value;
       }
     }
   }
@@ -472,7 +484,7 @@ async function buildContainerArgs(
     for (const { source, target } of COACH_DRIVE_ENV_VARS) {
       const value = process.env[source] || coachEnvVars[source];
       if (value) {
-        args.push('-e', `${target}=${value}`);
+        secretEnv[target] = value;
       }
     }
   }
@@ -482,7 +494,7 @@ async function buildContainerArgs(
     for (const key of COACH_PORTAL_ENV_VARS) {
       const value = process.env[key] || coachPortalEnvVars[key];
       if (value) {
-        args.push('-e', `${key}=${value}`);
+        secretEnv[key] = value;
       }
     }
   }
@@ -492,7 +504,7 @@ async function buildContainerArgs(
     for (const { source, target } of BIPBOT_CONTAINER_ENV_VARS) {
       const value = process.env[source] || bipbotEnvVars[source];
       if (value) {
-        args.push('-e', `${target}=${value}`);
+        secretEnv[target] = value;
       }
     }
   }
@@ -500,7 +512,7 @@ async function buildContainerArgs(
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {
     for (const [key, value] of Object.entries(providerContribution.env)) {
-      args.push('-e', `${key}=${value}`);
+      secretEnv[key] = value;
     }
   }
 
@@ -509,7 +521,7 @@ async function buildContainerArgs(
     for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']) {
       const value = process.env[key] || claudeEnvVars[key];
       if (value) {
-        args.push('-e', `${key}=${value}`);
+        secretEnv[key] = value;
       }
     }
   }
@@ -527,6 +539,16 @@ async function buildContainerArgs(
     }
     log.info('OneCLI gateway applied', { containerName });
   }
+
+  // OneCLI contributes its proxy environment through Docker `-e` flags.
+  // Pull those values back out so all dynamic environment values use the
+  // same mounted secret file and stay out of argv and Config.Env.
+  const extracted = extractContainerEnvironmentArgs(args);
+  args = extracted.args;
+  Object.assign(secretEnv, extracted.env);
+
+  // Non-secret process settings can remain ordinary Docker environment args.
+  args.push('-e', `TZ=${TIMEZONE}`);
 
   // Host gateway
   args.push(...hostGatewayArgs());
@@ -548,16 +570,28 @@ async function buildContainerArgs(
     }
   }
 
-  // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
-  args.push('--entrypoint', 'bash');
+  let secretFilePath: string | null = null;
+  try {
+    secretFilePath = writeContainerSecretFile(containerName, secretEnv);
+    if (secretFilePath) {
+      args.push(...readonlyMountArgs(secretFilePath, CONTAINER_SECRET_MOUNT_PATH));
+    }
 
-  // Use per-agent-group image if one has been built, otherwise base image
-  const imageTag = containerConfig.imageTag || CONTAINER_IMAGE;
-  args.push(imageTag);
+    // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
+    args.push('--entrypoint', 'bash');
 
-  args.push('-c', 'exec bun run /app/src/index.ts');
+    // Use per-agent-group image if one has been built, otherwise base image
+    const imageTag = containerConfig.imageTag || CONTAINER_IMAGE;
+    args.push(imageTag);
 
-  return args;
+    const loadSecretEnv = secretFilePath ? `set -a; . ${CONTAINER_SECRET_MOUNT_PATH}; set +a; ` : '';
+    args.push('-c', `set -euo pipefail; ${loadSecretEnv}exec bun run /app/src/index.ts`);
+
+    return { args, secretFilePath };
+  } catch (error) {
+    removeContainerSecretFile(secretFilePath);
+    throw error;
+  }
 }
 
 /** Build a per-agent-group Docker image with custom packages. */
