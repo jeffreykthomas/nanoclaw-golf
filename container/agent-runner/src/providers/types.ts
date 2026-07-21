@@ -46,6 +46,11 @@ export interface ProviderOptions {
    */
   model?: string;
   /**
+   * Model to use if the primary model fails or is unavailable. Passed through
+   * to the underlying SDK. Use `default` to fall back to the SDK default.
+   */
+  fallbackModel?: string;
+  /**
    * Reasoning effort (`'low' | 'medium' | 'high' | 'xhigh' | 'max'`). Passed
    * through to the underlying SDK. If omitted, the SDK default is used.
    */
@@ -96,7 +101,13 @@ export interface AgentQuery {
 
 export type ProviderEvent =
   | { type: 'init'; continuation: string }
-  | { type: 'result'; text: string | null }
+  /**
+   * `isError` distinguishes a genuine assistant reply from the SDK
+   * surfacing a transport-level failure (e.g. a dropped socket) as a
+   * `result` message's text — those should be retried, not relayed to
+   * the user verbatim.
+   */
+  | { type: 'result'; text: string | null; isError?: boolean }
   | { type: 'error'; message: string; retryable: boolean; classification?: string }
   | { type: 'progress'; message: string }
   /**

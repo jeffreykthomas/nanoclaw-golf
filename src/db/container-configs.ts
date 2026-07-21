@@ -4,6 +4,7 @@ import { getDb } from './connection.js';
 const SCALAR_COLUMNS = new Set([
   'provider',
   'model',
+  'fallback_model',
   'effort',
   'image_tag',
   'assistant_name',
@@ -27,11 +28,11 @@ export function createContainerConfig(config: ContainerConfigRow): void {
   getDb()
     .prepare(
       `INSERT INTO container_configs (
-        agent_group_id, provider, model, effort, image_tag, assistant_name,
+        agent_group_id, provider, model, fallback_model, effort, image_tag, assistant_name,
         max_messages_per_prompt, skills, mcp_servers, packages_apt, packages_npm,
         additional_mounts, updated_at
       ) VALUES (
-        @agent_group_id, @provider, @model, @effort, @image_tag, @assistant_name,
+        @agent_group_id, @provider, @model, @fallback_model, @effort, @image_tag, @assistant_name,
         @max_messages_per_prompt, @skills, @mcp_servers, @packages_apt, @packages_npm,
         @additional_mounts, @updated_at
       )`,
@@ -55,7 +56,14 @@ export function updateContainerConfigScalars(
   updates: Partial<
     Pick<
       ContainerConfigRow,
-      'provider' | 'model' | 'effort' | 'image_tag' | 'assistant_name' | 'max_messages_per_prompt' | 'cli_scope'
+      | 'provider'
+      | 'model'
+      | 'fallback_model'
+      | 'effort'
+      | 'image_tag'
+      | 'assistant_name'
+      | 'max_messages_per_prompt'
+      | 'cli_scope'
     >
   >,
 ): void {

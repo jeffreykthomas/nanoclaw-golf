@@ -55,6 +55,7 @@ export function backfillContainerConfigs(): void {
       agent_group_id: group.id,
       provider,
       model: null,
+      fallback_model: null,
       effort: null,
       image_tag: legacy.imageTag ?? null,
       assistant_name: legacy.assistantName ?? null,

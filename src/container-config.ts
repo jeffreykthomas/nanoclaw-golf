@@ -42,6 +42,7 @@ export interface ContainerConfig {
   agentGroupId?: string;
   maxMessagesPerPrompt?: number;
   model?: string;
+  fallbackModel?: string;
   effort?: string;
 }
 
@@ -62,6 +63,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     agentGroupId: group.id,
     maxMessagesPerPrompt: row.max_messages_per_prompt ?? undefined,
     model: row.model ?? undefined,
+    fallbackModel: row.fallback_model ?? undefined,
     effort: row.effort ?? undefined,
   };
 }

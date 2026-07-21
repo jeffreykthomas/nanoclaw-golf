@@ -336,6 +336,7 @@ export class ClaudeProvider implements AgentProvider {
   private env: Record<string, string | undefined>;
   private additionalDirectories?: string[];
   private model?: string;
+  private fallbackModel?: string;
   private effort?: string;
 
   constructor(options: ProviderOptions = {}) {
@@ -343,6 +344,7 @@ export class ClaudeProvider implements AgentProvider {
     this.mcpServers = options.mcpServers ?? {};
     this.additionalDirectories = options.additionalDirectories;
     this.model = options.model;
+    this.fallbackModel = options.fallbackModel;
     this.effort = options.effort;
     this.env = {
       ...(options.env ?? {}),
@@ -411,6 +413,7 @@ export class ClaudeProvider implements AgentProvider {
         disallowedTools: SDK_DISALLOWED_TOOLS,
         env: this.env,
         model: this.model,
+        fallbackModel: this.fallbackModel,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         effort: this.effort as any,
         permissionMode: 'bypassPermissions',
@@ -441,7 +444,12 @@ export class ClaudeProvider implements AgentProvider {
           yield { type: 'init', continuation: message.session_id };
         } else if (message.type === 'result') {
           const text = 'result' in message ? (message as { result?: string }).result ?? null : null;
-          yield { type: 'result', text };
+          // Some transport-level failures (e.g. a dropped socket mid-request)
+          // come back as a 'success'-shaped result whose text is a raw error
+          // string, rather than as a thrown exception. is_error flags those
+          // so the poll loop can retry instead of relaying them as a reply.
+          const isError = Boolean((message as { is_error?: boolean }).is_error);
+          yield { type: 'result', text, isError };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'rate_limit_event') {

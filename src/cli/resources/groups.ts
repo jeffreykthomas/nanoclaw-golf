@@ -18,6 +18,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     agent_group_id: row.agent_group_id,
     provider: row.provider,
     model: row.model,
+    fallback_model: row.fallback_model,
     effort: row.effort,
     image_tag: row.image_tag,
     assistant_name: row.assistant_name,
@@ -213,7 +214,7 @@ registerResource({
       access: 'approval',
       description:
         'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
-        'Use --id <group-id> and any of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
+        'Use --id <group-id> and any of: --provider, --model, --fallback-model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -223,11 +224,21 @@ registerResource({
         const updates: Partial<
           Pick<
             ContainerConfigRow,
-            'provider' | 'model' | 'effort' | 'image_tag' | 'assistant_name' | 'max_messages_per_prompt' | 'cli_scope'
+            | 'provider'
+            | 'model'
+            | 'fallback_model'
+            | 'effort'
+            | 'image_tag'
+            | 'assistant_name'
+            | 'max_messages_per_prompt'
+            | 'cli_scope'
           >
         > = {};
         if (args.provider !== undefined) updates.provider = args.provider as string;
         if (args.model !== undefined) updates.model = args.model as string;
+        if (args['fallback-model'] !== undefined || args.fallback_model !== undefined) {
+          updates.fallback_model = (args['fallback-model'] ?? args.fallback_model) as string;
+        }
         if (args.effort !== undefined) updates.effort = args.effort as string;
         if (args.image_tag !== undefined) updates.image_tag = args.image_tag as string;
         if (args.assistant_name !== undefined) updates.assistant_name = args.assistant_name as string;
@@ -243,7 +254,7 @@ registerResource({
 
         if (Object.keys(updates).length === 0) {
           throw new Error(
-            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
+            'Nothing to update — provide at least one of: --provider, --model, --fallback-model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
           );
         }
 

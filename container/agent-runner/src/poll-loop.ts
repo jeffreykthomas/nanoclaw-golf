@@ -28,6 +28,13 @@ const ACTIVE_POLL_INTERVAL_MS = 500;
 const CORRUPTION_STREAK_EXIT = 10;
 
 /**
+ * Max automatic retries for a transient SDK-level error result (e.g. a
+ * dropped socket) within a single turn, before giving up and relaying the
+ * raw error text to the user like any other failure.
+ */
+const MAX_ERROR_RESULT_RETRIES = 1;
+
+/**
  * True for SQLite errors that indicate a corrupt READ view — almost always a
  * cross-mount page-cache coherency issue on Docker Desktop macOS rather than
  * actual file damage (host-side integrity_check passes). Reopening the DB
@@ -303,6 +310,7 @@ async function processQuery(
   let queryContinuation: string | undefined;
   let done = false;
   let unwrappedNudged = false;
+  let errorRetries = 0;
   const resultRoutingQueue: RoutingContext[] = [routing];
 
   // Concurrent polling: push follow-ups into the active query as they arrive.
@@ -445,7 +453,16 @@ async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
-        if (event.text) {
+        if (event.isError && event.text && errorRetries < MAX_ERROR_RESULT_RETRIES) {
+          errorRetries++;
+          log(
+            `Result was a transient API error (retry ${errorRetries}/${MAX_ERROR_RESULT_RETRIES}): ${event.text.slice(0, 200)}`,
+          );
+          resultRoutingQueue.push(eventRouting);
+          query.push(
+            '<system>The previous response failed due to a transient API/network error before any reply was generated. Please try again.</system>',
+          );
+        } else if (event.text) {
           const { hasUnwrapped } = dispatchResultText(event.text, eventRouting);
           if (hasUnwrapped && !unwrappedNudged) {
             unwrappedNudged = true;
