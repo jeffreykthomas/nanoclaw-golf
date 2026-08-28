@@ -1,6 +1,12 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+
 import { Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, TELEGRAM_API_ROOT, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
@@ -12,7 +18,13 @@ interface TelegramBotEntry {
   bot: Bot;
   username: string;
   token: string;
+  apiRoot: string;
 }
+
+const DEFAULT_TELEGRAM_API_ROOT = 'https://api.telegram.org';
+/** Cloud Bot API hard-codes 500s; a local server can stream multi-hundred-MB videos. */
+const LOCAL_TELEGRAM_API_TIMEOUT_SECONDS = 3600;
+const CONTAINER_BOT_API_DATA_DIR = '/var/lib/telegram-bot-api';
 
 const TELEGRAM_TEXT_LIMIT = 4096;
 const TELEGRAM_CAPTION_LIMIT = 1024;
@@ -63,9 +75,11 @@ interface TelegramInboundAttachment {
   width?: number;
   height?: number;
   data?: string;
+  sourcePath?: string;
 }
 
-type TelegramFileDownloader = (fileId: string) => Promise<Buffer>;
+export type TelegramDownloadedFile = Buffer | { path: string };
+export type TelegramFileDownloader = (fileId: string) => Promise<TelegramDownloadedFile>;
 
 interface TelegramRoute {
   chatId: string;
@@ -103,6 +117,51 @@ export function parseTelegramRoute(platformId: string): TelegramRoute {
   }
   const match = body.match(/(-?\d+)$/);
   return { chatId: match ? match[1] : body };
+}
+
+export function resolveTelegramApiRoot(raw = TELEGRAM_API_ROOT): string {
+  const value = raw.trim().replace(/\/$/, '');
+  return value || DEFAULT_TELEGRAM_API_ROOT;
+}
+
+export function isTelegramCloudApi(apiRoot: string): boolean {
+  return resolveTelegramApiRoot(apiRoot) === DEFAULT_TELEGRAM_API_ROOT;
+}
+
+/**
+ * Cloud Bot API `getFile` is capped at 20MB. A local Bot API server returns
+ * either a relative path (download via `${apiRoot}/file/bot<token>/...`) or,
+ * with `--local`, an absolute filesystem path the server already fetched.
+ */
+export function telegramFileDownloadTarget(
+  apiRoot: string,
+  token: string,
+  filePath: string,
+): { kind: 'local'; path: string } | { kind: 'url'; url: string } {
+  if (filePath.startsWith('/')) return { kind: 'local', path: remapTelegramBotApiPath(filePath) };
+  return { kind: 'url', url: `${resolveTelegramApiRoot(apiRoot)}/file/bot${token}/${filePath}` };
+}
+
+/**
+ * `--local` Bot API returns container paths under `/var/lib/telegram-bot-api`.
+ * NanoClaw runs on the host, so map that onto the bind-mounted data dir.
+ */
+export function remapTelegramBotApiPath(
+  filePath: string,
+  hostDataDir = process.env.TELEGRAM_BOT_API_DATA || path.join(process.cwd(), 'data/telegram-bot-api'),
+): string {
+  if (filePath === CONTAINER_BOT_API_DATA_DIR || filePath.startsWith(`${CONTAINER_BOT_API_DATA_DIR}/`)) {
+    return path.join(hostDataDir, filePath.slice(CONTAINER_BOT_API_DATA_DIR.length));
+  }
+  return filePath;
+}
+
+function telegramClientOptions(apiRoot: string) {
+  const root = resolveTelegramApiRoot(apiRoot);
+  return {
+    apiRoot: root,
+    timeoutSeconds: isTelegramCloudApi(root) ? 500 : LOCAL_TELEGRAM_API_TIMEOUT_SECONDS,
+  };
 }
 
 export function selectTelegramBotsForRoute<T extends Pick<TelegramBotEntry, 'username'>>(
@@ -237,8 +296,12 @@ export async function extractTelegramAttachments(
     // Keep the message routable even if Telegram media download fails.
     /* eslint-disable no-catch-all/no-catch-all */
     try {
-      const buffer = await downloadFile(item.file.file_id);
-      attachment.data = buffer.toString('base64');
+      const downloaded = await downloadFile(item.file.file_id);
+      if (Buffer.isBuffer(downloaded)) {
+        attachment.data = downloaded.toString('base64');
+      } else {
+        attachment.sourcePath = downloaded.path;
+      }
     } catch (err) {
       log.warn('Failed to download Telegram attachment', { type: item.type, err });
     }
@@ -248,13 +311,25 @@ export async function extractTelegramAttachments(
   return attachments;
 }
 
-async function downloadTelegramFile(entry: TelegramBotEntry, fileId: string): Promise<Buffer> {
+async function downloadTelegramFile(entry: TelegramBotEntry, fileId: string): Promise<TelegramDownloadedFile> {
   const file = await entry.bot.api.getFile(fileId);
   if (!file.file_path) throw new Error('telegram_file_path_missing');
 
-  const response = await fetch(`https://api.telegram.org/file/bot${entry.token}/${file.file_path}`);
+  const target = telegramFileDownloadTarget(entry.apiRoot, entry.token, file.file_path);
+  if (target.kind === 'local') {
+    await fs.promises.access(target.path);
+    return { path: target.path };
+  }
+
+  const response = await fetch(target.url);
   if (!response.ok) throw new Error(`telegram_file_download_failed_${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  const tmpPath = path.join(os.tmpdir(), `nanoclaw-tg-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  if (!response.body) {
+    await fs.promises.writeFile(tmpPath, Buffer.from(await response.arrayBuffer()));
+    return { path: tmpPath };
+  }
+  await pipeline(Readable.fromWeb(response.body as import('stream/web').ReadableStream), fs.createWriteStream(tmpPath));
+  return { path: tmpPath };
 }
 
 async function sendTextChunks(entry: TelegramBotEntry, chatId: string, text: string): Promise<string | undefined> {
@@ -274,7 +349,7 @@ async function sendTextChunks(entry: TelegramBotEntry, chatId: string, text: str
   return firstMessageId;
 }
 
-async function sendTelegramPayload(
+export async function sendTelegramPayload(
   entry: TelegramBotEntry,
   chatId: string,
   text: string,
@@ -305,7 +380,11 @@ async function sendTelegramPayload(
   }
 
   if (remainingText) {
-    firstMessageId ??= await sendTextChunks(entry, chatId, remainingText);
+    // Always send leftover body. `??=` would skip this once the file send
+    // already set firstMessageId — which is how captions over 1024 chars
+    // were delivered truncated with no follow-up message.
+    const overflowId = await sendTextChunks(entry, chatId, remainingText);
+    firstMessageId ??= overflowId;
   }
 
   return firstMessageId;
@@ -335,7 +414,8 @@ function createAdapter(tokens: string[]): ChannelAdapter {
   const bots: TelegramBotEntry[] = [];
 
   async function setupBot(token: string): Promise<void> {
-    const bot = new Bot(token);
+    const apiRoot = resolveTelegramApiRoot();
+    const bot = new Bot(token, { client: telegramClientOptions(apiRoot) });
     const me = await bot.api.getMe();
     const username = me.username;
     if (!username) throw new Error('telegram_bot_username_missing');
@@ -364,7 +444,7 @@ function createAdapter(tokens: string[]): ChannelAdapter {
       const text = extractTelegramText(message);
       if (text.startsWith('/')) return;
       const attachments = await extractTelegramAttachments(message, (fileId) =>
-        downloadTelegramFile({ bot, username, token }, fileId),
+        downloadTelegramFile({ bot, username, token, apiRoot }, fileId),
       );
       if (!text && attachments.length === 0) return;
 
@@ -416,12 +496,16 @@ function createAdapter(tokens: string[]): ChannelAdapter {
       await setup.onInbound(platformId, null, inbound);
     });
 
-    bots.push({ bot, username, token });
+    bots.push({ bot, username, token, apiRoot });
     void bot
       .start({
         drop_pending_updates: true,
         onStart(info) {
-          log.info('Telegram bot connected', { username: info.username, id: info.id });
+          log.info('Telegram bot connected', {
+            username: info.username,
+            id: info.id,
+            apiRoot,
+          });
         },
       })
       .catch((err) => {

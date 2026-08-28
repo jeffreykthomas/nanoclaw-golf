@@ -35,6 +35,20 @@ const CORRUPTION_STREAK_EXIT = 10;
 const MAX_ERROR_RESULT_RETRIES = 1;
 
 /**
+ * SDK/context failures that must never be retried in the same session
+ * (retry refills the window) and must never be forwarded as a chat reply.
+ */
+const INFRASTRUCTURE_RESULT_RE =
+  /autocompact is thrashing|too large for the context window|prompt is too long/i;
+
+export const CONTEXT_OVERFLOW_USER_MESSAGE =
+  'I ran out of working context on that last turn and started a fresh session so it does not loop. Please resend whatever was still outstanding — I will pick it up from ledgers and recent notes, not the bloated transcript.';
+
+export function isInfrastructureResult(text: string): boolean {
+  return INFRASTRUCTURE_RESULT_RE.test(text);
+}
+
+/**
  * True for SQLite errors that indicate a corrupt READ view — almost always a
  * cross-mount page-cache coherency issue on Docker Desktop macOS rather than
  * actual file damage (host-side integrity_check passes). Reopening the DB
@@ -453,7 +467,18 @@ async function processQuery(
         // (send_message) mid-turn, or the message may not need a response
         // at all — either way the turn is finished.
         markCompleted(initialBatchIds);
-        if (event.isError && event.text && errorRetries < MAX_ERROR_RESULT_RETRIES) {
+        if (event.text && isInfrastructureResult(event.text)) {
+          log(
+            `Infrastructure result (not relayed, session dropped): ${event.text.slice(0, 200)}`,
+          );
+          // Retrying inside the same transcript refills the window and
+          // thrashes. Drop the continuation so the next inbound message
+          // starts clean, and send a short human notice instead of the
+          // raw SDK error.
+          clearContinuation(providerName);
+          queryContinuation = undefined;
+          sendOverflowNotice(eventRouting);
+        } else if (event.isError && event.text && errorRetries < MAX_ERROR_RESULT_RETRIES) {
           errorRetries++;
           log(
             `Result was a transient API error (retry ${errorRetries}/${MAX_ERROR_RESULT_RETRIES}): ${event.text.slice(0, 200)}`,
@@ -514,6 +539,18 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
  * The agent must always wrap output in <message to="name">...</message>
  * blocks, even with a single destination. Bare text is scratchpad only.
  */
+export function sendOverflowNotice(routing: RoutingContext): void {
+  writeMessageOut({
+    id: generateId(),
+    in_reply_to: routing.inReplyTo,
+    kind: 'chat',
+    platform_id: routing.platformId,
+    channel_type: routing.channelType,
+    thread_id: routing.threadId,
+    content: JSON.stringify({ text: CONTEXT_OVERFLOW_USER_MESSAGE }),
+  });
+}
+
 export function dispatchResultText(text: string, routing: RoutingContext): { sent: number; hasUnwrapped: boolean } {
   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
   const destinations = getAllDestinations();

@@ -39,6 +39,7 @@ const coachEnvConfig = readEnvFile([
   'SELF_UNDERSTANDING_REPORTS_LOOP_INTERVAL_MS',
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_MIRROR_CHAT_ID',
+  'TELEGRAM_API_ROOT',
 ]);
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -191,6 +192,11 @@ export const BIPBOT_REPO_URL =
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || coachEnvConfig.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_MIRROR_CHAT_ID =
   process.env.TELEGRAM_MIRROR_CHAT_ID || coachEnvConfig.TELEGRAM_MIRROR_CHAT_ID || '';
+export const TELEGRAM_API_ROOT = (
+  process.env.TELEGRAM_API_ROOT || coachEnvConfig.TELEGRAM_API_ROOT || 'https://api.telegram.org'
+)
+  .trim()
+  .replace(/\/$/, '') || 'https://api.telegram.org';
 
 export const AUTO_CHECKINS_ENABLED =
   (process.env.AUTO_CHECKINS_ENABLED || coachEnvConfig.AUTO_CHECKINS_ENABLED || 'false') === 'true';

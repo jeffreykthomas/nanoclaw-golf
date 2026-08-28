@@ -1,11 +1,11 @@
-import { TELEGRAM_BOT_TOKEN, TELEGRAM_MIRROR_CHAT_ID } from './config.js';
+import { TELEGRAM_API_ROOT, TELEGRAM_BOT_TOKEN, TELEGRAM_MIRROR_CHAT_ID } from './config.js';
 import { sanitizeTelegramLegacyMarkdown } from './channels/telegram-markdown-sanitize.js';
 import { log } from './log.js';
 
 const TELEGRAM_PARSE_MODE = 'Markdown';
 
 function apiBase(): string {
-  return `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
+  return `${TELEGRAM_API_ROOT}/bot${TELEGRAM_BOT_TOKEN}`;
 }
 
 export function normalizeTelegramChatId(chatId: string): string {

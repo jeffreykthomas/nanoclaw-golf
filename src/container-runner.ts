@@ -75,6 +75,16 @@ const MENTORS_OPERATIONAL_ENV_VARS = [
   'ELEVENLABS_API_KEY',
   'OPENAI_API_KEY',
 ];
+// Mentors is a long-lived hub session. These apply only to this group;
+// host env can still override. Compact used to fire at 80k for Fable
+// token cost; Opal is cheap enough that we match the default 165k window
+// and keep rotate somewhat tighter than other groups so screenshots/tool
+// dumps still cannot grow without bound.
+export const MENTORS_CONTEXT_TRIM_ENV: Record<string, string> = {
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: '165000',
+  CLAUDE_TRANSCRIPT_ROTATE_BYTES: String(8 * 1024 * 1024),
+  CLAUDE_TRANSCRIPT_ROTATE_AGE_DAYS: '7',
+};
 const COACH_AGENT_GROUP_ID = 'agent-coach-2';
 const COACH_DRIVE_ENV_VARS = [
   { source: 'COACH_GOOGLE_SERVICE_ACCOUNT_JSON', target: 'GOOGLE_SERVICE_ACCOUNT_JSON' },
@@ -476,6 +486,9 @@ async function buildContainerArgs(
       if (value) {
         secretEnv[key] = value;
       }
+    }
+    for (const [key, fallback] of Object.entries(MENTORS_CONTEXT_TRIM_ENV)) {
+      secretEnv[key] = process.env[key] || fallback;
     }
   }
 

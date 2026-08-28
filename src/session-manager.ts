@@ -12,6 +12,7 @@
  */
 import type Database from 'better-sqlite3';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { deriveAttachmentName } from './attachment-naming.js';
@@ -290,7 +291,9 @@ function extractAttachmentFiles(
 
   let changed = false;
   for (const att of attachments) {
-    if (typeof att.data !== 'string') continue;
+    const sourcePath = typeof att.sourcePath === 'string' ? att.sourcePath : '';
+    const hasData = typeof att.data === 'string';
+    if (!hasData && !sourcePath) continue;
 
     const rawName = deriveAttachmentName(att);
     const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
@@ -331,10 +334,17 @@ function extractAttachmentFiles(
 
     const filePath = path.join(inboxDir, filename);
     try {
-      // wx = exclusive create. Refuses to follow a pre existing symlink or
-      // overwrite any existing file. The host expects to be the sole writer
-      // of these attachments.
-      fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'), { flag: 'wx' });
+      // wx / COPYFILE_EXCL = exclusive create. Refuses to follow a pre
+      // existing symlink or overwrite any existing file. The host expects
+      // to be the sole writer of these attachments.
+      if (sourcePath) {
+        fs.copyFileSync(sourcePath, filePath, fs.constants.COPYFILE_EXCL);
+        if (sourcePath.startsWith(os.tmpdir() + path.sep) || sourcePath.startsWith(os.tmpdir() + '/')) {
+          fs.unlinkSync(sourcePath);
+        }
+      } else {
+        fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'), { flag: 'wx' });
+      }
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === 'EEXIST') {
@@ -350,6 +360,7 @@ function extractAttachmentFiles(
     att.name = filename;
     att.localPath = `inbox/${messageId}/${filename}`;
     delete att.data;
+    delete att.sourcePath;
     changed = true;
     log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
   }

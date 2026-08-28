@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { ClaudeProvider } from './claude.js';
+import { ClaudeProvider, digestTranscriptMessages, isCompactNoiseContent } from './claude.js';
 
 // maybeRotateContinuation guards the cold-resume failure mode: a long-lived
 // session whose on-disk transcript has grown so large (or old) that the SDK
@@ -85,5 +85,49 @@ describe('ClaudeProvider.maybeRotateContinuation', () => {
   it('returns null for an unknown session id', () => {
     const provider = new ClaudeProvider();
     expect(provider.maybeRotateContinuation('does-not-exist', CWD)).toBeNull();
+  });
+});
+
+describe('digestTranscriptMessages', () => {
+  it('drops compact-continuation dumps and autocompact errors', () => {
+    const digested = digestTranscriptMessages([
+      { role: 'user', content: 'looks good, create the zip' },
+      { role: 'assistant', content: 'Zip is done' },
+      {
+        role: 'user',
+        content:
+          'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+      },
+      {
+        role: 'assistant',
+        content:
+          'Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row.',
+      },
+    ]);
+    expect(digested).toEqual([
+      { role: 'user', content: 'looks good, create the zip' },
+      { role: 'assistant', content: 'Zip is done' },
+    ]);
+  });
+
+  it('keeps only the most recent real turns', () => {
+    const messages = Array.from({ length: 40 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `turn ${i}`,
+    }));
+    const digested = digestTranscriptMessages(messages);
+    expect(digested[0].content).toBe('turn 16');
+    expect(digested.at(-1)?.content).toBe('turn 39');
+    expect(digested).toHaveLength(24);
+  });
+});
+
+describe('isCompactNoiseContent', () => {
+  it('matches continuation dumps', () => {
+    expect(isCompactNoiseContent('This session is being continued from a previous conversation')).toBe(true);
+  });
+
+  it('leaves real user text alone', () => {
+    expect(isCompactNoiseContent('queue the psych email for Tuesday morning')).toBe(false);
   });
 });

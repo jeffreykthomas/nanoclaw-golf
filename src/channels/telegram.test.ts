@@ -1,11 +1,17 @@
+import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   collectTelegramMedia,
   extractTelegramAttachments,
   extractTelegramText,
+  isTelegramCloudApi,
   parseTelegramRoute,
+  remapTelegramBotApiPath,
+  resolveTelegramApiRoot,
   selectTelegramBotsForRoute,
+  sendTelegramPayload,
+  telegramFileDownloadTarget,
 } from './telegram.js';
 import { log } from '../log.js';
 
@@ -112,5 +118,86 @@ describe('telegram inbound media', () => {
         height: 1080,
       },
     ]);
+  });
+
+  it('keeps a sourcePath when the downloader returns a local file', async () => {
+    const attachments = await extractTelegramAttachments(
+      {
+        message_id: 5,
+        date: 1,
+        video: { file_id: 'video-2', file_name: 'clip.mp4', mime_type: 'video/mp4' },
+      },
+      async () => ({ path: '/tmp/clip.mp4' }),
+    );
+
+    expect(attachments).toEqual([
+      {
+        type: 'video',
+        name: 'clip.mp4',
+        mimeType: 'video/mp4',
+        sourcePath: '/tmp/clip.mp4',
+      },
+    ]);
+  });
+});
+
+describe('telegram Bot API root', () => {
+  it('strips trailing slashes and defaults to the cloud API', () => {
+    expect(resolveTelegramApiRoot('https://api.telegram.org/')).toBe('https://api.telegram.org');
+    expect(resolveTelegramApiRoot('')).toBe('https://api.telegram.org');
+    expect(isTelegramCloudApi('https://api.telegram.org/')).toBe(true);
+    expect(isTelegramCloudApi('http://127.0.0.1:8081')).toBe(false);
+  });
+
+  it('downloads cloud and non-local files over HTTP', () => {
+    expect(telegramFileDownloadTarget('https://api.telegram.org', 'TOKEN', 'videos/clip.mp4')).toEqual({
+      kind: 'url',
+      url: 'https://api.telegram.org/file/botTOKEN/videos/clip.mp4',
+    });
+    expect(telegramFileDownloadTarget('http://127.0.0.1:8081/', 'TOKEN', 'videos/clip.mp4')).toEqual({
+      kind: 'url',
+      url: 'http://127.0.0.1:8081/file/botTOKEN/videos/clip.mp4',
+    });
+  });
+
+  it('reads absolute paths from a local Bot API server', () => {
+    expect(
+      telegramFileDownloadTarget('http://127.0.0.1:8081', 'TOKEN', '/var/lib/telegram-bot-api/videos/clip.mp4'),
+    ).toEqual({
+      kind: 'local',
+      path: path.join(process.cwd(), 'data/telegram-bot-api/videos/clip.mp4'),
+    });
+  });
+
+  it('leaves non-container absolute paths unchanged', () => {
+    expect(remapTelegramBotApiPath('/tmp/clip.mp4')).toBe('/tmp/clip.mp4');
+  });
+});
+
+describe('telegram file caption overflow', () => {
+  it('sends leftover body after a document caption instead of dropping it', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 2 });
+    const sendDocument = vi.fn().mockResolvedValue({ message_id: 1 });
+    const text = `${'A'.repeat(1024)} leftover-tail`;
+
+    const platformMsgId = await sendTelegramPayload(
+      {
+        bot: { api: { sendMessage, sendDocument } },
+        username: 'mentors_more_bot',
+        token: 'TOKEN',
+        apiRoot: 'https://api.telegram.org',
+      } as never,
+      '-5135159854',
+      text,
+      [{ filename: 'dels-game-plan.pdf', data: Buffer.from('%PDF') }],
+    );
+
+    expect(platformMsgId).toBe('1');
+    expect(sendDocument).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(sendDocument.mock.calls[0][2]).toEqual(
+      expect.objectContaining({ caption: 'A'.repeat(1024), parse_mode: 'Markdown' }),
+    );
+    expect(sendMessage.mock.calls[0][1]).toBe('leftover-tail');
   });
 });

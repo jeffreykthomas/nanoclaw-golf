@@ -4,7 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { dispatchResultText, isCorruptionError } from './poll-loop.js';
+import { dispatchResultText, isCorruptionError, isInfrastructureResult, sendOverflowNotice, CONTEXT_OVERFLOW_USER_MESSAGE } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -413,5 +413,44 @@ describe('isCorruptionError', () => {
     expect(isCorruptionError('database is locked')).toBe(false);
     expect(isCorruptionError('no such table: messages_in')).toBe(false);
     expect(isCorruptionError('')).toBe(false);
+  });
+});
+
+describe('isInfrastructureResult', () => {
+  it('matches autocompact thrash text', () => {
+    expect(
+      isInfrastructureResult(
+        'Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row. A file being read or a tool output is likely too large for the context window.',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches prompt-too-long failures', () => {
+    expect(isInfrastructureResult('prompt is too long')).toBe(true);
+  });
+
+  it('does not match normal assistant replies', () => {
+    expect(isInfrastructureResult('Zip is done, stats below — but I need one clarification before I post anything.')).toBe(
+      false,
+    );
+  });
+});
+
+describe('sendOverflowNotice', () => {
+  it('writes a short human notice instead of the raw SDK error', () => {
+    sendOverflowNotice({
+      platformId: 'tg:-5135159854',
+      channelType: 'telegram',
+      threadId: null,
+      inReplyTo: 'm1',
+    });
+
+    const outMessages = getUndeliveredMessages();
+    expect(outMessages).toHaveLength(1);
+    const text = JSON.parse(outMessages[0].content).text as string;
+    expect(text).toBe(CONTEXT_OVERFLOW_USER_MESSAGE);
+    expect(text).not.toMatch(/autocompact/i);
+    expect(outMessages[0].platform_id).toBe('tg:-5135159854');
+    expect(outMessages[0].in_reply_to).toBe('m1');
   });
 });

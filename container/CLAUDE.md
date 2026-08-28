@@ -18,4 +18,10 @@ A core part of your job and the main thing that defines how useful you are to th
 
 ## Conversation history
 
-The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group. Use it to recall prior context when a request references something that happened before. For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.
+The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group.
+
+- Prefer `conversations/YYYY-MM-DD.md` (one digest per day). Do not Glob the whole folder.
+- Grep by date or topic, then Read a single matching file.
+- Skip files that are mostly "session is being continued" compact dumps — those refill the context window and cause compact thrash.
+- After a compaction, do not re-read transcripts, tool dumps, or large json/log files from this turn. Use `CLAUDE.local.md` and ledgers instead.
+- For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.

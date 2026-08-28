@@ -253,6 +253,28 @@ describe('session manager', () => {
     expect(fs.readFileSync(expected, 'utf-8')).toBe('PNGBYTES');
   });
 
+  it('should copy inbound attachments from a local sourcePath without base64', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    const source = path.join(TEST_DIR, 'clip.mp4');
+    fs.writeFileSync(source, 'VIDEOBYTES');
+
+    writeSessionMessage('ag-1', session.id, {
+      id: 'msg-video',
+      kind: 'chat',
+      timestamp: now(),
+      content: JSON.stringify({
+        text: 'video',
+        attachments: [{ name: 'clip.mp4', type: 'video', mimeType: 'video/mp4', sourcePath: source, size: 10 }],
+      }),
+    });
+
+    const expected = path.join(sessionDir('ag-1', session.id), 'inbox', 'msg-video', 'clip.mp4');
+    expect(fs.existsSync(expected)).toBe(true);
+    expect(fs.readFileSync(expected, 'utf-8')).toBe('VIDEOBYTES');
+    expect(fs.existsSync(source)).toBe(true);
+  });
+
   it('should resolve to existing session (shared mode)', () => {
     const { session: s1, created: c1 } = resolveSession('ag-1', 'mg-1', null, 'shared');
     expect(c1).toBe(true);

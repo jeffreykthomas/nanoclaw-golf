@@ -119,6 +119,41 @@ interface ParsedMessage {
   content: string;
 }
 
+const COMPACT_NOISE_RE =
+  /This session is being continued from a previous conversation|Autocompact is thrashing|too large for the context window|The previous response failed due to a transient API|prompt is too long/i;
+
+/** Max real turns kept in a daily conversation digest. */
+const MAX_ARCHIVED_MESSAGES = 24;
+/** Cap so a digest cannot refill the window if the agent re-reads it. */
+const MAX_ARCHIVE_CHARS = 24_000;
+const MAX_ARCHIVE_MSG_CHARS = 1200;
+
+export function isCompactNoiseContent(content: string): boolean {
+  return COMPACT_NOISE_RE.test(content);
+}
+
+/**
+ * Drop compact-continuation dumps and cap size so PreCompact archives cannot
+ * refill the context window on the next turn.
+ */
+export function digestTranscriptMessages(messages: ParsedMessage[]): ParsedMessage[] {
+  const real = messages.filter((m) => !isCompactNoiseContent(m.content));
+  const sliced = real.slice(-MAX_ARCHIVED_MESSAGES);
+  const out: ParsedMessage[] = [];
+  let total = 0;
+  for (let i = sliced.length - 1; i >= 0; i--) {
+    const msg = sliced[i];
+    const content =
+      msg.content.length > MAX_ARCHIVE_MSG_CHARS
+        ? `${msg.content.slice(0, MAX_ARCHIVE_MSG_CHARS)}...`
+        : msg.content;
+    if (out.length > 0 && total + content.length > MAX_ARCHIVE_CHARS) break;
+    total += content.length;
+    out.unshift({ role: msg.role, content });
+  }
+  return out;
+}
+
 function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
   for (const line of content.split('\n')) {
@@ -143,11 +178,10 @@ function parseTranscript(content: string): ParsedMessage[] {
 function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-  const lines = [`# ${title || 'Conversation'}`, '', `Archived: ${dateStr}`, '', '---', ''];
+  const lines = [`# ${title || 'Conversation digest'}`, '', `Archived: ${dateStr}`, '', '---', ''];
   for (const msg of messages) {
     const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
-    const content = msg.content.length > 2000 ? msg.content.slice(0, 2000) + '...' : msg.content;
-    lines.push(`**${sender}**: ${content}`, '');
+    lines.push(`**${sender}**: ${msg.content}`, '');
   }
   return lines.join('\n');
 }
@@ -202,7 +236,7 @@ function archiveTranscriptFile(transcriptPath: string | undefined, sessionId: st
 
   try {
     const content = fs.readFileSync(transcriptPath, 'utf-8');
-    const messages = parseTranscript(content);
+    const messages = digestTranscriptMessages(parseTranscript(content));
     if (messages.length === 0) return false;
 
     // Try to get summary from sessions index
@@ -217,13 +251,11 @@ function archiveTranscriptFile(transcriptPath: string | undefined, sessionId: st
       }
     }
 
-    const name = summary
-      ? summary.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50)
-      : `conversation-${new Date().getHours().toString().padStart(2, '0')}${new Date().getMinutes().toString().padStart(2, '0')}`;
-
     const conversationsDir = process.env.NANOCLAW_CONVERSATIONS_DIR || '/workspace/agent/conversations';
     fs.mkdirSync(conversationsDir, { recursive: true });
-    const filename = `${new Date().toISOString().split('T')[0]}-${name}.md`;
+    // One file per day, overwritten on each compact, so dumps cannot pile up
+    // and get globbed back into context (the failure mode that thrashed).
+    const filename = `${new Date().toISOString().split('T')[0]}.md`;
     fs.writeFileSync(path.join(conversationsDir, filename), formatTranscriptMarkdown(messages, summary, assistantName));
     log(`Archived conversation to ${filename}`);
     return true;
@@ -348,7 +380,10 @@ export class ClaudeProvider implements AgentProvider {
     this.effort = options.effort;
     this.env = {
       ...(options.env ?? {}),
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW:
+        options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ||
+        process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ||
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW,
     };
   }
 
