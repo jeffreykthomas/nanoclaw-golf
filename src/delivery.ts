@@ -408,6 +408,42 @@ export function registerDeliveryAction(action: string, handler: DeliveryActionHa
 }
 
 /**
+ * Built-in action: requeue claimed messages with a delay. Emitted by the
+ * agent-runner when a turn dies on an account usage/rate limit — the whole
+ * account is out of capacity, so retrying now is pointless and the crash-
+ * retry backoff (seconds-scale, MAX_TRIES 5) would burn out long before a
+ * multi-hour window reset. The runner exits without acking; this handler
+ * makes the rows due again later, and the sweep wakes a fresh container
+ * (which clears the stale processing acks) at that time.
+ *
+ * Does not touch `tries` — these are deliberate deferrals, not failures,
+ * and must never push a message into the MAX_TRIES 'failed' state.
+ */
+export async function handleDeferMessages(
+  content: Record<string, unknown>,
+  session: Session,
+  inDb: Database.Database,
+): Promise<void> {
+  const ids = Array.isArray(content.messageIds)
+    ? (content.messageIds as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
+  const raw = Number(content.delayMinutes);
+  const minutes = Number.isFinite(raw) ? Math.min(240, Math.max(1, Math.round(raw))) : 30;
+  if (ids.length === 0) return;
+
+  const stmt = inDb.prepare(
+    `UPDATE messages_in SET status = 'pending', process_after = datetime('now', '+${minutes * 60} seconds')
+     WHERE id = ? AND status IN ('pending', 'processing')`,
+  );
+  let deferred = 0;
+  inDb.transaction(() => {
+    for (const id of ids) deferred += stmt.run(id).changes;
+  })();
+  log.info('Deferred messages after usage limit', { sessionId: session.id, deferred, minutes });
+}
+registerDeliveryAction('defer_messages', handleDeferMessages);
+
+/**
  * Handle system actions from the container agent.
  * These are written to messages_out because the container can't write to inbound.db.
  * The host applies them to inbound.db here.

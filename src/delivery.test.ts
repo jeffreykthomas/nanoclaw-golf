@@ -36,7 +36,7 @@ import {
 } from './db/index.js';
 import { getDeliveredIds } from './db/session-db.js';
 import { resolveSession, outboundDbPath, openInboundDb } from './session-manager.js';
-import { deliverSessionMessages, setDeliveryAdapter } from './delivery.js';
+import { deliverSessionMessages, handleDeferMessages, setDeliveryAdapter } from './delivery.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -269,5 +269,95 @@ describe('deliverSessionMessages — permission check', () => {
     const delivered = getDeliveredIds(inDb);
     inDb.close();
     expect(delivered.has('out-unauth')).toBe(true);
+  });
+});
+
+describe('handleDeferMessages — usage-limit requeue', () => {
+  it('requeues claimed rows with a future process_after without bumping tries', async () => {
+    seedAgentAndChannel();
+    createMessagingGroupAgent({
+      id: 'mga-defer',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'pattern',
+      engage_pattern: '.',
+      sender_scope: 'all',
+      ignored_message_policy: 'drop',
+      session_mode: 'shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session } = resolveSession('ag-1', 'mg-1', null);
+    const inDb = openInboundDb(session.agent_group_id, session.id);
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, tries, content)
+         VALUES ('m1', 2, 'task', datetime('now'), 'processing', 0, '{}'),
+                ('m2', 4, 'chat', datetime('now'), 'processing', 2, '{}'),
+                ('m3', 6, 'chat', datetime('now'), 'completed', 0, '{}')`,
+      )
+      .run();
+
+    await handleDeferMessages(
+      { action: 'defer_messages', messageIds: ['m1', 'm2', 'm3'], delayMinutes: 30 },
+      session,
+      inDb,
+    );
+
+    const rows = inDb.prepare('SELECT id, status, tries, process_after FROM messages_in ORDER BY id').all() as Array<{
+      id: string;
+      status: string;
+      tries: number;
+      process_after: string | null;
+    }>;
+    expect(rows[0].status).toBe('pending');
+    expect(rows[1].status).toBe('pending');
+    // completed rows are never resurrected
+    expect(rows[2].status).toBe('completed');
+    expect(rows[2].process_after).toBeNull();
+    // deliberate deferral, not a failure — tries untouched
+    expect(rows[0].tries).toBe(0);
+    expect(rows[1].tries).toBe(2);
+    // due roughly 30 minutes out
+    const dueMs = Date.parse(rows[0].process_after + 'Z') - Date.now();
+    expect(dueMs).toBeGreaterThan(25 * 60_000);
+    expect(dueMs).toBeLessThan(35 * 60_000);
+    inDb.close();
+  });
+
+  it('clamps a hostile delay and ignores junk ids', async () => {
+    seedAgentAndChannel();
+    createMessagingGroupAgent({
+      id: 'mga-defer2',
+      messaging_group_id: 'mg-1',
+      agent_group_id: 'ag-1',
+      engage_mode: 'pattern',
+      engage_pattern: '.',
+      sender_scope: 'all',
+      ignored_message_policy: 'drop',
+      session_mode: 'shared',
+      priority: 0,
+      created_at: now(),
+    });
+    const { session } = resolveSession('ag-1', 'mg-1', null);
+    const inDb = openInboundDb(session.agent_group_id, session.id);
+    inDb
+      .prepare(
+        `INSERT INTO messages_in (id, seq, kind, timestamp, status, tries, content)
+         VALUES ('m1', 2, 'task', datetime('now'), 'processing', 0, '{}')`,
+      )
+      .run();
+
+    await handleDeferMessages(
+      { action: 'defer_messages', messageIds: ['m1', 42, null], delayMinutes: 999999 },
+      session,
+      inDb,
+    );
+    const row = inDb.prepare("SELECT process_after FROM messages_in WHERE id='m1'").get() as {
+      process_after: string;
+    };
+    const dueMs = Date.parse(row.process_after + 'Z') - Date.now();
+    expect(dueMs).toBeLessThan(241 * 60_000); // clamped to 240m
+    inDb.close();
   });
 });

@@ -98,3 +98,22 @@ export function getLastTurnAt(): number | undefined {
 export function setLastTurnAt(at: number = Date.now()): void {
   setValue(LAST_TURN_KEY, new Date(at).toISOString());
 }
+
+const USAGE_LIMIT_NOTICE_KEY = 'usage_limit_noticed_at';
+
+/**
+ * Marker set after the user has been told once that the account usage limit
+ * is blocking replies, so repeated defer cycles stay silent. Cleared on the
+ * next successful turn.
+ */
+export function hasUsageLimitNotice(): boolean {
+  return getValue(USAGE_LIMIT_NOTICE_KEY) !== undefined;
+}
+
+export function setUsageLimitNotice(): void {
+  setValue(USAGE_LIMIT_NOTICE_KEY, new Date().toISOString());
+}
+
+export function clearUsageLimitNotice(): void {
+  deleteValue(USAGE_LIMIT_NOTICE_KEY);
+}

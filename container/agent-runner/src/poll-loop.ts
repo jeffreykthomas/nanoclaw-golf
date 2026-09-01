@@ -4,10 +4,13 @@ import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
 import {
   clearContinuation,
+  clearUsageLimitNotice,
   getLastTurnAt,
+  hasUsageLimitNotice,
   migrateLegacyContinuation,
   setContinuation,
   setLastTurnAt,
+  setUsageLimitNotice,
 } from './db/session-state.js';
 import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import {
@@ -53,6 +56,72 @@ export const CONTEXT_OVERFLOW_USER_MESSAGE =
 
 export function isInfrastructureResult(text: string): boolean {
   return INFRASTRUCTURE_RESULT_RE.test(text);
+}
+
+/**
+ * Account-level usage/rate-limit failures. Only ever consulted for results the
+ * provider already flagged as errors, so plain conversation mentioning "rate
+ * limit" can never match. These are NOT retryable now and NOT worth relaying
+ * raw: the whole account is out of capacity (model fallback can't help — the
+ * usage window is shared), so the right move is to requeue the batch for
+ * later and get out of the way.
+ */
+const USAGE_LIMIT_RESULT_RE = /usage limit|rate limit|\b429\b/i;
+
+export function isUsageLimitResult(text: string): boolean {
+  return USAGE_LIMIT_RESULT_RE.test(text);
+}
+
+/**
+ * Minutes to push the batch into the future when the usage limit is hit.
+ * Flat rather than exponential: the outage ends when the 5h window resets,
+ * and each retry costs one container spawn plus one rejected API call.
+ */
+function usageLimitDeferMinutes(): number {
+  const raw = Number(process.env.USAGE_LIMIT_DEFER_MINUTES);
+  return Number.isFinite(raw) && raw >= 1 && raw <= 240 ? Math.round(raw) : 30;
+}
+
+export const USAGE_LIMIT_USER_MESSAGE =
+  "I've hit my usage limit, so I can't answer right now. Your message is queued — I'll retry automatically about every half hour and reply as soon as capacity is back.";
+
+/**
+ * Usage-limit exit path. The container cannot write inbound.db, so it asks
+ * the host (via a system action) to requeue the batch with a delay, sends a
+ * one-time notice when a human is waiting, and exits WITHOUT acking the
+ * batch complete. The fresh container at retry time clears the stale
+ * processing acks and picks the rows back up.
+ *
+ * Never returns.
+ */
+function exitForUsageLimit(batchIds: string[], routing: RoutingContext, batchHasChat: boolean, errText: string): never {
+  const minutes = usageLimitDeferMinutes();
+  log(`Usage limit hit — deferring ${batchIds.length} message(s) ${minutes}m and exiting: ${errText.slice(0, 160)}`);
+
+  writeMessageOut({
+    id: generateId(),
+    kind: 'system',
+    platform_id: null,
+    channel_type: null,
+    thread_id: null,
+    content: JSON.stringify({ action: 'defer_messages', messageIds: batchIds, delayMinutes: minutes }),
+  });
+
+  // Tell a waiting human once per outage, not once per retry cycle.
+  if (batchHasChat && !hasUsageLimitNotice()) {
+    setUsageLimitNotice();
+    writeMessageOut({
+      id: generateId(),
+      in_reply_to: routing.inReplyTo,
+      kind: 'chat',
+      platform_id: routing.platformId,
+      channel_type: routing.channelType,
+      thread_id: routing.threadId,
+      content: JSON.stringify({ text: USAGE_LIMIT_USER_MESSAGE }),
+    });
+  }
+
+  process.exit(0);
 }
 
 /**
@@ -310,7 +379,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     try {
       const result = await processQuery(query, routing, processingIds, config.providerName, {
         onTaskModel: Boolean(batchModel),
+        batchHasChat: keep.some((m) => m.kind === 'chat' || m.kind === 'chat-sdk'),
       });
+      // A turn made it through the API — any standing usage-limit notice
+      // marker is stale now.
+      clearUsageLimitNotice();
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
         setContinuation(config.providerName, continuation);
@@ -403,7 +476,7 @@ async function processQuery(
   routing: RoutingContext,
   initialBatchIds: string[],
   providerName: string,
-  opts: { onTaskModel?: boolean } = {},
+  opts: { onTaskModel?: boolean; batchHasChat?: boolean } = {},
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
@@ -555,6 +628,14 @@ async function processQuery(
         setContinuation(providerName, event.continuation);
       } else if (event.type === 'result') {
         const eventRouting = resultRoutingQueue.shift() ?? routing;
+        // Account usage limit: nothing was generated and nothing will be
+        // until the window resets. Requeue the batch via the host and exit
+        // WITHOUT completing — this must run before markCompleted below.
+        // Known edge: follow-ups already pushed mid-stream were completed at
+        // push time and ride the next turn's context rather than this defer.
+        if (event.isError && event.text && isUsageLimitResult(event.text)) {
+          exitForUsageLimit(initialBatchIds, eventRouting, Boolean(opts.batchHasChat), event.text);
+        }
         // A result — with or without text — means the turn is done. Mark
         // the initial batch completed now so the host sweep doesn't see
         // stale 'processing' claims while the query stays open for

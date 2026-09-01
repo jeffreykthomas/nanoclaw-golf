@@ -4,7 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { dispatchResultText, isCorruptionError, isInfrastructureResult, pickBatchModel, sendOverflowNotice, shouldDebounceBatch, CONTEXT_OVERFLOW_USER_MESSAGE } from './poll-loop.js';
+import { dispatchResultText, isCorruptionError, isInfrastructureResult, isUsageLimitResult, pickBatchModel, sendOverflowNotice, shouldDebounceBatch, CONTEXT_OVERFLOW_USER_MESSAGE } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -504,5 +504,17 @@ describe('shouldDebounceBatch', () => {
     // steady stream: newest is fresh, but oldest has waited 95s > 90s cap
     const batch = [row('chat', 95_000, NOW), row('chat', 1_000, NOW)];
     expect(shouldDebounceBatch(batch, 20_000, NOW)).toBe(false);
+  });
+});
+
+describe('isUsageLimitResult', () => {
+  it('matches account usage/rate-limit error texts', () => {
+    expect(isUsageLimitResult("API Error: Request rejected (429) · This request would exceed your account's rate limit. Please try again later.")).toBe(true);
+    expect(isUsageLimitResult('Claude AI usage limit reached|1756770000')).toBe(true);
+    expect(isUsageLimitResult('Rate limit exceeded')).toBe(true);
+  });
+  it('does not match other error texts', () => {
+    expect(isUsageLimitResult('API Error (500): internal server error')).toBe(false);
+    expect(isUsageLimitResult('fetch failed: socket hang up')).toBe(false);
   });
 });
