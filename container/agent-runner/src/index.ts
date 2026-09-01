@@ -139,6 +139,8 @@ async function main(): Promise<void> {
     providerName,
     cwd: CWD,
     systemContext: { instructions },
+    taskModel: config.taskModel,
+    chatDebounceMs: config.chatDebounceMs,
   });
 }
 

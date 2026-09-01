@@ -19,6 +19,8 @@ export interface RunnerConfig {
   model?: string;
   fallbackModel?: string;
   effort?: string;
+  taskModel?: string;
+  chatDebounceMs?: number;
 }
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -49,6 +51,8 @@ export function loadConfig(): RunnerConfig {
     model: (raw.model as string) || undefined,
     fallbackModel: (raw.fallbackModel as string) || undefined,
     effort: (raw.effort as string) || undefined,
+    taskModel: (raw.taskModel as string) || undefined,
+    chatDebounceMs: typeof raw.chatDebounceMs === 'number' && raw.chatDebounceMs > 0 ? raw.chatDebounceMs : undefined,
   };
 
   return _config;

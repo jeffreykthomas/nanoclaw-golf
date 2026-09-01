@@ -44,6 +44,8 @@ export interface ContainerConfig {
   model?: string;
   fallbackModel?: string;
   effort?: string;
+  taskModel?: string;
+  chatDebounceMs?: number;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -65,6 +67,8 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     model: row.model ?? undefined,
     fallbackModel: row.fallback_model ?? undefined,
     effort: row.effort ?? undefined,
+    taskModel: row.task_model ?? undefined,
+    chatDebounceMs: row.chat_debounce_ms ?? undefined,
   };
 }
 

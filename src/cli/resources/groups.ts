@@ -20,6 +20,8 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     model: row.model,
     fallback_model: row.fallback_model,
     effort: row.effort,
+    task_model: row.task_model,
+    chat_debounce_ms: row.chat_debounce_ms,
     image_tag: row.image_tag,
     assistant_name: row.assistant_name,
     max_messages_per_prompt: row.max_messages_per_prompt,
@@ -214,7 +216,7 @@ registerResource({
       access: 'approval',
       description:
         'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
-        'Use --id <group-id> and any of: --provider, --model, --fallback-model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
+        'Use --id <group-id> and any of: --provider, --model, --fallback-model, --effort, --task-model, --chat-debounce-ms, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -228,6 +230,8 @@ registerResource({
             | 'model'
             | 'fallback_model'
             | 'effort'
+            | 'task_model'
+            | 'chat_debounce_ms'
             | 'image_tag'
             | 'assistant_name'
             | 'max_messages_per_prompt'
@@ -240,6 +244,12 @@ registerResource({
           updates.fallback_model = (args['fallback-model'] ?? args.fallback_model) as string;
         }
         if (args.effort !== undefined) updates.effort = args.effort as string;
+        if (args['task-model'] !== undefined || args.task_model !== undefined) {
+          updates.task_model = (args['task-model'] ?? args.task_model) as string;
+        }
+        if (args['chat-debounce-ms'] !== undefined || args.chat_debounce_ms !== undefined) {
+          updates.chat_debounce_ms = Number(args['chat-debounce-ms'] ?? args.chat_debounce_ms);
+        }
         if (args.image_tag !== undefined) updates.image_tag = args.image_tag as string;
         if (args.assistant_name !== undefined) updates.assistant_name = args.assistant_name as string;
         if (args.max_messages_per_prompt !== undefined)
@@ -254,7 +264,7 @@ registerResource({
 
         if (Object.keys(updates).length === 0) {
           throw new Error(
-            'Nothing to update — provide at least one of: --provider, --model, --fallback-model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
+            'Nothing to update — provide at least one of: --provider, --model, --fallback-model, --effort, --task-model, --chat-debounce-ms, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
           );
         }
 

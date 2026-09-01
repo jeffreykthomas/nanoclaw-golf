@@ -4,7 +4,7 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { dispatchResultText, isCorruptionError, isInfrastructureResult, sendOverflowNotice, CONTEXT_OVERFLOW_USER_MESSAGE } from './poll-loop.js';
+import { dispatchResultText, isCorruptionError, isInfrastructureResult, pickBatchModel, sendOverflowNotice, shouldDebounceBatch, CONTEXT_OVERFLOW_USER_MESSAGE } from './poll-loop.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -452,5 +452,57 @@ describe('sendOverflowNotice', () => {
     expect(text).not.toMatch(/autocompact/i);
     expect(outMessages[0].platform_id).toBe('tg:-5135159854');
     expect(outMessages[0].in_reply_to).toBe('m1');
+  });
+});
+
+// --- task-model routing + burst debounce ---
+
+import type { MessageInRow } from './db/messages-in.js';
+
+function row(kind: string, ageMs: number, now: number): MessageInRow {
+  return {
+    id: `m-${kind}-${ageMs}`,
+    kind,
+    timestamp: new Date(now - ageMs).toISOString(),
+    content: '{}',
+  } as MessageInRow;
+}
+
+describe('pickBatchModel', () => {
+  const NOW = Date.now();
+  it('returns the task model for task-only batches', () => {
+    expect(pickBatchModel([row('task', 0, NOW)], 'opus')).toBe('opus');
+    expect(pickBatchModel([row('task', 0, NOW), row('task', 1000, NOW)], 'opus')).toBe('opus');
+  });
+  it('returns undefined when any human message is present', () => {
+    expect(pickBatchModel([row('task', 0, NOW), row('chat', 0, NOW)], 'opus')).toBeUndefined();
+    expect(pickBatchModel([row('chat-sdk', 0, NOW)], 'opus')).toBeUndefined();
+    expect(pickBatchModel([row('webhook', 0, NOW)], 'opus')).toBeUndefined();
+  });
+  it('returns undefined without a configured task model or with an empty batch', () => {
+    expect(pickBatchModel([row('task', 0, NOW)], undefined)).toBeUndefined();
+    expect(pickBatchModel([], 'opus')).toBeUndefined();
+  });
+});
+
+describe('shouldDebounceBatch', () => {
+  const NOW = Date.now();
+  it('debounces a fresh chat message', () => {
+    expect(shouldDebounceBatch([row('chat', 3_000, NOW)], 20_000, NOW)).toBe(true);
+  });
+  it('does not debounce once the burst has quieted past the window', () => {
+    expect(shouldDebounceBatch([row('chat', 25_000, NOW)], 20_000, NOW)).toBe(false);
+  });
+  it('never debounces task-only batches', () => {
+    expect(shouldDebounceBatch([row('task', 0, NOW)], 20_000, NOW)).toBe(false);
+  });
+  it('is disabled when unset or non-positive', () => {
+    expect(shouldDebounceBatch([row('chat', 0, NOW)], undefined, NOW)).toBe(false);
+    expect(shouldDebounceBatch([row('chat', 0, NOW)], 0, NOW)).toBe(false);
+  });
+  it('starts anyway once the oldest chat message hits the max-wait ceiling', () => {
+    // steady stream: newest is fresh, but oldest has waited 95s > 90s cap
+    const batch = [row('chat', 95_000, NOW), row('chat', 1_000, NOW)];
+    expect(shouldDebounceBatch(batch, 20_000, NOW)).toBe(false);
   });
 });

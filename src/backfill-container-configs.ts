@@ -56,6 +56,8 @@ export function backfillContainerConfigs(): void {
       provider,
       model: null,
       fallback_model: null,
+      task_model: null,
+      chat_debounce_ms: null,
       effort: null,
       image_tag: legacy.imageTag ?? null,
       assistant_name: legacy.assistantName ?? null,

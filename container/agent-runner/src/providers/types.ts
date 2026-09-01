@@ -71,6 +71,15 @@ export interface QueryInput {
   cwd: string;
 
   /**
+   * Per-query model override. When set, the provider should use this model
+   * for the whole query instead of its configured default. Used to run
+   * task-only wakes (watchers, pipelines) on a cheaper model while keeping
+   * the premium default for turns with human messages. Providers without
+   * per-query model support may ignore it.
+   */
+  model?: string;
+
+  /**
    * System context to inject. Providers translate this into whatever their
    * SDK expects (preset append, full system prompt, per-turn injection…).
    */

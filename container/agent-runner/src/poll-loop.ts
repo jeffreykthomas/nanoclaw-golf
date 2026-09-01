@@ -90,6 +90,51 @@ export interface PollLoopConfig {
   systemContext?: {
     instructions?: string;
   };
+  /**
+   * Cheaper model for task-only batches (scheduled watchers, pipelines).
+   * Batches containing any human-originated message keep the provider's
+   * default model; if a human message arrives mid task-model query, the
+   * stream is ended and the outer loop reopens on the default model.
+   */
+  taskModel?: string;
+  /**
+   * Quiet window (ms) before opening a turn on a batch containing fresh chat
+   * messages. Bursty senders type several messages in quick succession; waiting
+   * for a short lull turns the burst into ONE model turn instead of a first
+   * turn plus mid-stream pushes (each push is a fresh thinking round).
+   * Capped by DEBOUNCE_MAX_WAIT_MS so a steady stream still gets answered.
+   */
+  chatDebounceMs?: number;
+}
+
+/** Hard ceiling on how long chat debouncing may delay a turn. */
+const DEBOUNCE_MAX_WAIT_MS = 90_000;
+
+/**
+ * True when the batch should wait for the burst to quiet down: it contains a
+ * chat message younger than debounceMs, and the oldest chat message hasn't
+ * been waiting past the max-wait ceiling.
+ */
+export function shouldDebounceBatch(messages: MessageInRow[], debounceMs: number | undefined, now: number): boolean {
+  if (!debounceMs || debounceMs <= 0) return false;
+  const chatTimes = messages
+    .filter((m) => m.kind === 'chat' || m.kind === 'chat-sdk')
+    .map((m) => Date.parse(m.timestamp))
+    .filter((t) => !Number.isNaN(t));
+  if (chatTimes.length === 0) return false;
+  const newest = Math.max(...chatTimes);
+  const oldest = Math.min(...chatTimes);
+  if (now - oldest >= Math.max(DEBOUNCE_MAX_WAIT_MS, debounceMs)) return false;
+  return now - newest < debounceMs;
+}
+
+/**
+ * Task-only batches run on the configured cheaper task model; any batch with
+ * a human-originated message (chat, webhook, …) uses the provider default.
+ */
+export function pickBatchModel(messages: MessageInRow[], taskModel: string | undefined): string | undefined {
+  if (!taskModel) return undefined;
+  return messages.length > 0 && messages.every((m) => m.kind === 'task') ? taskModel : undefined;
 }
 
 /**
@@ -167,6 +212,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       continue;
     }
 
+    // Burst debounce: leave the batch pending until the sender pauses, so the
+    // whole burst lands in one query turn. Rows stay 'pending' (not claimed),
+    // so a crash during the wait loses nothing.
+    if (shouldDebounceBatch(messages, config.chatDebounceMs, Date.now())) {
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
     const ids = messages.map((m) => m.id);
     markProcessing(ids);
 
@@ -237,11 +290,15 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
 
+    const batchModel = pickBatchModel(keep, config.taskModel);
+    if (batchModel) log(`Task-only batch — using task model ${batchModel}`);
+
     const query = config.provider.query({
       prompt,
       continuation,
       cwd: config.cwd,
       systemContext: config.systemContext,
+      model: batchModel,
     });
 
     // Process the query while concurrently polling for new messages
@@ -251,7 +308,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
     try {
-      const result = await processQuery(query, routing, processingIds, config.providerName);
+      const result = await processQuery(query, routing, processingIds, config.providerName, {
+        onTaskModel: Boolean(batchModel),
+      });
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
         setContinuation(config.providerName, continuation);
@@ -344,6 +403,7 @@ async function processQuery(
   routing: RoutingContext,
   initialBatchIds: string[],
   providerName: string,
+  opts: { onTaskModel?: boolean } = {},
 ): Promise<QueryResult> {
   let queryContinuation: string | undefined;
   let done = false;
@@ -380,6 +440,17 @@ async function processQuery(
         // canonical command path + formatMessagesWithCommands.
         if (pending.some((m) => isRunnerCommand(m))) {
           log('Pending slash command — ending stream so outer loop can process');
+          endedForCommand = true;
+          query.end();
+          return;
+        }
+
+        // Model escalation: this query runs on the cheaper task model, and a
+        // human-originated message just arrived. End the stream and leave the
+        // rows pending — the outer loop reopens on the default model so the
+        // human never gets a downgraded reply.
+        if (opts.onTaskModel && pending.some((m) => m.kind !== 'task' && m.kind !== 'system')) {
+          log('Human message during task-model query — ending stream to escalate model');
           endedForCommand = true;
           query.end();
           return;
