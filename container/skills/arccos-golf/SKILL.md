@@ -27,7 +27,7 @@ If missing in Sync Mode → emit the failure JSON (`missing_credentials`) and ex
 
 The Arccos dashboard stores a JSON blob in a cookie named `creds` containing `{accessKey, token, user:{userId}}`. We log in once with the browser, read that cookie, and cache it.
 
-Cached creds live at `/workspace/group/arccos-creds.json`:
+Cached creds live at `/workspace/agent/arccos-creds.json`:
 
 ```json
 { "access_key": "<40-char hex>", "user_id": "<uuid-ish>", "fetched_at": "<iso ts>" }
@@ -36,7 +36,7 @@ Cached creds live at `/workspace/group/arccos-creds.json`:
 ### Decide whether to bootstrap
 
 ```bash
-CREDS=/workspace/group/arccos-creds.json
+CREDS=/workspace/agent/arccos-creds.json
 if [ -f "$CREDS" ]; then
   ACCESS_KEY=$(jq -r .access_key "$CREDS")
   USER_ID=$(jq -r .user_id "$CREDS")
@@ -53,7 +53,7 @@ If `STATUS` is 200 → **skip to Data Fetch**. Otherwise (no file, or 401/403) �
 ### Browser bootstrap
 
 ```bash
-agent-browser state load /workspace/group/arccos-auth.json 2>/dev/null
+agent-browser state load /workspace/agent/arccos-auth.json 2>/dev/null
 agent-browser open https://dashboard.arccosgolf.com/
 agent-browser wait --load networkidle
 agent-browser get url
@@ -75,7 +75,7 @@ Handle common login variants: "Sign in with email" toggles, cookie/terms banners
 Save the browser state for future runs:
 
 ```bash
-agent-browser state save /workspace/group/arccos-auth.json
+agent-browser state save /workspace/agent/arccos-auth.json
 ```
 
 ### Extract `creds` from cookies
@@ -85,7 +85,7 @@ The state file is JSON with a `cookies` array. The `creds` cookie value is a URL
 ```bash
 python3 - <<'PY'
 import json, urllib.parse, datetime, pathlib
-state = json.load(open("/workspace/group/arccos-auth.json"))
+state = json.load(open("/workspace/agent/arccos-auth.json"))
 creds_cookie = next((c for c in state.get("cookies", []) if c["name"] == "creds"), None)
 if not creds_cookie:
     raise SystemExit("no_creds_cookie")
@@ -96,7 +96,7 @@ out = {
     "user_id": data["user"]["userId"],
     "fetched_at": datetime.datetime.utcnow().isoformat() + "Z",
 }
-pathlib.Path("/workspace/group/arccos-creds.json").write_text(json.dumps(out, indent=2))
+pathlib.Path("/workspace/agent/arccos-creds.json").write_text(json.dumps(out, indent=2))
 print("saved:", out["user_id"])
 PY
 ```
@@ -107,7 +107,7 @@ Re-read `ACCESS_KEY` and `USER_ID` from the file.
 
 ```bash
 # Only if we skipped browser bootstrap but are in Sync Mode:
-# agent-browser state load /workspace/group/arccos-auth.json 2>/dev/null
+# agent-browser state load /workspace/agent/arccos-auth.json 2>/dev/null
 # agent-browser open https://dashboard.arccosgolf.com/
 # agent-browser wait --load networkidle
 ```
@@ -130,7 +130,7 @@ Activated when the prompt contains `ARCCOS_SYNC_MODE=1`. Prompt also provides:
 
    ```bash
    curl -s "https://api.arccosgolf.com/users/$USER_ID/rounds" \
-     -H "Authorization: $ACCESS_KEY" > /workspace/group/rounds-list.json
+     -H "Authorization: $ACCESS_KEY" > /workspace/agent/rounds-list.json
    ```
 
    The response is `{ "rounds": [ { roundId, courseId, startTime, noOfHoles, ... } ] }`.
@@ -141,7 +141,7 @@ Activated when the prompt contains `ARCCOS_SYNC_MODE=1`. Prompt also provides:
 
    ```bash
    curl -s "https://api.arccosgolf.com/users/$USER_ID/rounds/$ROUND_ID" \
-     -H "Authorization: $ACCESS_KEY" > "/workspace/group/arccos-round-details/$ROUND_ID.json"
+     -H "Authorization: $ACCESS_KEY" > "/workspace/agent/arccos-round-details/$ROUND_ID.json"
    ```
 
    Loop in parallel (e.g. `xargs -P 4`) — the API is fast. ~200ms per round.
@@ -150,7 +150,7 @@ Activated when the prompt contains `ARCCOS_SYNC_MODE=1`. Prompt also provides:
 
    ```bash
    curl -s "https://api.arccosgolf.com/courses/$COURSE_ID" \
-     -H "Authorization: $ACCESS_KEY" > "/workspace/group/arccos-courses/$COURSE_ID.json"
+     -H "Authorization: $ACCESS_KEY" > "/workspace/agent/arccos-courses/$COURSE_ID.json"
    ```
 
 6. **Compute per-round stats** from the hole array. Each hole object includes `putts`, `isGir` (T/F), `isFairWay`/`isFairWayUser`, `isUpDownChance`/`isUpDown`, `noOfShots`, and a `shots` array with distances, lies, etc. Derive:
@@ -184,7 +184,7 @@ Activated when the prompt contains `ARCCOS_SYNC_MODE=1`. Prompt also provides:
       - The four SG values with their labels: **Driving**, **Approach**, **Short**, **Putting** (signs matter — they can be negative).
 
       ```bash
-      agent-browser snapshot -c > /workspace/group/rounds-page-$PAGE.txt
+      agent-browser snapshot -c > /workspace/agent/rounds-page-$PAGE.txt
       # Then parse the snapshot to pull roundId + the four SG values per row.
       ```
 
