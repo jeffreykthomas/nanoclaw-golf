@@ -25,3 +25,7 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 - Skip files that are mostly "session is being continued" compact dumps — those refill the context window and cause compact thrash.
 - After a compaction, do not re-read transcripts, tool dumps, or large json/log files from this turn. Use `CLAUDE.local.md` and ledgers instead.
 - For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.
+
+### Topic gaps
+
+When a turn opens with a `<topic-gap since_last_turn="...">` block, the channel has been quiet long enough that the conversation above is more likely a distractor than context. Re-ground in your durable memory — `CLAUDE.local.md`, and your ledger or index files if you keep them — before acting, and reuse whatever paths, folders, and naming those already define rather than inventing new ones. If the new request does turn out to continue earlier work, say so and carry on.

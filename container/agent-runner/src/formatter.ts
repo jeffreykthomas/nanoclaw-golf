@@ -115,6 +115,67 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
 }
 
 /**
+ * Hours of silence after which a new inbound batch is treated as a likely
+ * topic change rather than a continuation of the transcript. Override with
+ * `TOPIC_GAP_HOURS`; a non-positive value disables the marker entirely.
+ */
+function topicGapMs(): number {
+  const raw = process.env.TOPIC_GAP_HOURS;
+  if (raw === undefined || raw.trim() === '') return 2 * 3_600_000;
+  const hours = Number(raw);
+  if (!Number.isFinite(hours)) return 2 * 3_600_000;
+  return hours > 0 ? hours * 3_600_000 : Infinity;
+}
+
+/** "4h 12m" / "35m" / "3d 2h" — coarse, for the agent to read, not parse. */
+export function formatDuration(ms: number): string {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rem = minutes % 60;
+    return rem === 0 ? `${hours}h` : `${hours}h ${rem}m`;
+  }
+  const days = Math.floor(hours / 24);
+  const rem = hours % 24;
+  return rem === 0 ? `${days}d` : `${days}d ${rem}h`;
+}
+
+/**
+ * Marker prepended when a batch arrives after a long silence.
+ *
+ * Chat traffic in these groups is bursty and topic-hops without warning, so
+ * a resumed transcript is more often a distractor than context. Rather than
+ * dropping the history (which loses the cases where it *is* relevant), tell
+ * the agent explicitly that the burden of proof has flipped: re-ground in
+ * the durable memory (CLAUDE.local.md, ledger index) before leaning on the
+ * conversation above.
+ */
+export function buildTopicGapMarker(gapMs: number): string {
+  return [
+    `<topic-gap since_last_turn="${escapeXml(formatDuration(gapMs))}">`,
+    `It has been ${formatDuration(gapMs)} since the previous exchange. Treat the messages below as a likely NEW topic — do not assume the conversation above is related to them.`,
+    'Before acting, re-ground in your durable memory rather than the transcript:',
+    '- read `CLAUDE.local.md` for standing context and the index of your other files',
+    '- read your ledger index (`ledgers/INDEX.md`) if you keep one, and reuse the matching ledger — its paths, naming, and folders — instead of starting fresh',
+    '- Grep a specific dated digest in `conversations/` only if you need a detail you cannot find above',
+    'If the request does turn out to continue earlier work, say so and carry on; just verify it against the ledger first.',
+    '</topic-gap>',
+  ].join('\n');
+}
+
+export interface FormatOptions {
+  /**
+   * Epoch ms of the last completed turn in this session, if known. Drives the
+   * `<topic-gap>` marker. Omitted for mid-stream follow-ups, where the gap is
+   * by definition ~zero.
+   */
+  lastTurnAt?: number;
+  /** Injectable for tests. Defaults to `Date.now()`. */
+  now?: number;
+}
+
+/**
  * Format a batch of messages_in rows into a prompt string.
  *
  * Prepends a `<context timezone="<IANA>" />` header so the agent always knows
@@ -126,9 +187,12 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
  *
  * Strips routing fields — the agent never sees platform_id, channel_type, thread_id.
  */
-export function formatMessages(messages: MessageInRow[]): string {
+export function formatMessages(messages: MessageInRow[], opts: FormatOptions = {}): string {
   const header = `<context timezone="${escapeXml(TIMEZONE)}" />\n`;
   if (messages.length === 0) return header;
+
+  const gapMs = opts.lastTurnAt === undefined ? undefined : (opts.now ?? Date.now()) - opts.lastTurnAt;
+  const gapMarker = gapMs !== undefined && gapMs >= topicGapMs() ? `${buildTopicGapMarker(gapMs)}\n\n` : '';
 
   // Group by kind
   const chatMessages = messages.filter((m) => m.kind === 'chat' || m.kind === 'chat-sdk');
@@ -151,7 +215,7 @@ export function formatMessages(messages: MessageInRow[]): string {
     parts.push(...systemMessages.map(formatSystemMessage));
   }
 
-  return header + parts.join('\n\n');
+  return header + gapMarker + parts.join('\n\n');
 }
 
 function formatChatMessages(messages: MessageInRow[]): string {

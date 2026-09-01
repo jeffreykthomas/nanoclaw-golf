@@ -2,7 +2,13 @@ import { findByName, getAllDestinations, type DestinationEntry } from './destina
 import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
 import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
-import { clearContinuation, migrateLegacyContinuation, setContinuation } from './db/session-state.js';
+import {
+  clearContinuation,
+  getLastTurnAt,
+  migrateLegacyContinuation,
+  setContinuation,
+  setLastTurnAt,
+} from './db/session-state.js';
 import { clearCurrentInReplyTo, setCurrentInReplyTo } from './current-batch.js';
 import {
   formatMessages,
@@ -11,6 +17,7 @@ import {
   isClearCommand,
   isRunnerCommand,
   stripInternalTags,
+  type FormatOptions,
   type RoutingContext,
 } from './formatter.js';
 import type { AgentProvider, AgentQuery, ProviderEvent } from './providers/types.js';
@@ -124,6 +131,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
   // This lets the new container re-process those messages.
   clearStaleProcessingAcks();
 
+  // Epoch ms of the previous completed turn, used to decide whether an
+  // incoming batch gets a `<topic-gap>` marker. Loaded from outbound.db so a
+  // cold container wake still knows how long the channel has been quiet.
+  let lastTurnAt: number | undefined = getLastTurnAt();
+
   let pollCount = 0;
   let isFirstPoll = true;
   while (true) {
@@ -221,7 +233,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
     // Format messages: passthrough commands get raw text (only if the
     // provider natively handles slash commands), others get XML.
-    const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
+    const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands, { lastTurnAt });
 
     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
 
@@ -273,6 +285,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Ensure completed even if processQuery ended without a result event
     // (e.g. stream closed unexpectedly).
     markCompleted(processingIds);
+
+    // Stamp the turn boundary AFTER the query settles (success or error) —
+    // the gap the agent cares about is time-since-we-last-talked, and a turn
+    // that errored out still consumed the window it would have been measured
+    // from. Follow-ups pushed mid-stream deliberately do not move this.
+    lastTurnAt = Date.now();
+    setLastTurnAt(lastTurnAt);
+
     log(`Completed ${ids.length} message(s)`);
   }
 }
@@ -283,7 +303,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
  * passthrough commands are sent raw (no XML wrapping) so the SDK can
  * dispatch them. Otherwise they fall through to standard XML formatting.
  */
-function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommands: boolean): string {
+function formatMessagesWithCommands(
+  messages: MessageInRow[],
+  nativeSlashCommands: boolean,
+  opts: FormatOptions = {},
+): string {
   const parts: string[] = [];
   const normalBatch: MessageInRow[] = [];
 
@@ -293,7 +317,7 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
       if (cmdInfo.category === 'passthrough' || cmdInfo.category === 'admin') {
         // Flush normal batch first
         if (normalBatch.length > 0) {
-          parts.push(formatMessages(normalBatch));
+          parts.push(formatMessages(normalBatch, opts));
           normalBatch.length = 0;
         }
         // Pass raw command text (no XML wrapping) — SDK handles it natively
@@ -305,7 +329,7 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
   }
 
   if (normalBatch.length > 0) {
-    parts.push(formatMessages(normalBatch));
+    parts.push(formatMessages(normalBatch, opts));
   }
 
   return parts.join('\n\n');

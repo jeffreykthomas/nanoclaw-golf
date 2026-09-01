@@ -77,3 +77,24 @@ export function setContinuation(providerName: string, id: string): void {
 export function clearContinuation(providerName: string): void {
   deleteValue(continuationKey(providerName));
 }
+
+const LAST_TURN_KEY = 'last_turn_at';
+
+/**
+ * Epoch ms of the last completed agent turn in this session, or undefined if
+ * none has been recorded (fresh session, or a container predating this key).
+ *
+ * Persisted rather than kept in memory so the gap survives container restarts —
+ * a cold wake after a night of silence is exactly the case the `<topic-gap>`
+ * marker exists for, and that is also the case where the process is new.
+ */
+export function getLastTurnAt(): number | undefined {
+  const raw = getValue(LAST_TURN_KEY);
+  if (raw === undefined) return undefined;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+export function setLastTurnAt(at: number = Date.now()): void {
+  setValue(LAST_TURN_KEY, new Date(at).toISOString());
+}

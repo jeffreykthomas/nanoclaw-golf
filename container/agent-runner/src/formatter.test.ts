@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
-import { formatMessages, stripInternalTags } from './formatter.js';
+import { formatDuration, formatMessages, stripInternalTags } from './formatter.js';
 import { TIMEZONE } from './timezone.js';
 
 beforeEach(() => {
@@ -192,5 +192,68 @@ describe('stripInternalTags', () => {
     expect(stripInternalTags('<internal>thinking</internal>The answer is 42')).toBe(
       'The answer is 42',
     );
+  });
+});
+
+// --- topic-gap marker ---
+
+const HOUR = 3_600_000;
+
+describe('topic-gap marker', () => {
+  it('omits the marker when no prior turn is known', () => {
+    insertMessage('m1', 'chat', { text: 'hi', sender: 'Jeffrey' });
+    const out = formatMessages(getPendingMessages());
+    expect(out).not.toContain('<topic-gap');
+  });
+
+  it('omits the marker for a short gap', () => {
+    insertMessage('m1', 'chat', { text: 'hi', sender: 'Jeffrey' });
+    const now = Date.now();
+    const out = formatMessages(getPendingMessages(), { lastTurnAt: now - 20 * 60_000, now });
+    expect(out).not.toContain('<topic-gap');
+  });
+
+  it('adds the marker past the threshold, before the messages', () => {
+    insertMessage('m1', 'chat', { text: 'hi', sender: 'Jeffrey' });
+    const now = Date.now();
+    const out = formatMessages(getPendingMessages(), { lastTurnAt: now - 5 * HOUR, now });
+
+    expect(out).toContain('<topic-gap since_last_turn="5h">');
+    expect(out).toContain('ledgers/INDEX.md');
+    expect(out).toContain('CLAUDE.local.md');
+    // Ordering matters: the marker must be read before the messages it frames.
+    expect(out.indexOf('<topic-gap')).toBeLessThan(out.indexOf('<message'));
+    // ...and after the timezone header, which stays first.
+    expect(out.indexOf('<context')).toBeLessThan(out.indexOf('<topic-gap'));
+  });
+
+  it('honours TOPIC_GAP_HOURS', () => {
+    insertMessage('m1', 'chat', { text: 'hi', sender: 'Jeffrey' });
+    const now = Date.now();
+    const prev = process.env.TOPIC_GAP_HOURS;
+    try {
+      process.env.TOPIC_GAP_HOURS = '12';
+      expect(formatMessages(getPendingMessages(), { lastTurnAt: now - 5 * HOUR, now })).not.toContain('<topic-gap');
+      expect(formatMessages(getPendingMessages(), { lastTurnAt: now - 20 * HOUR, now })).toContain('<topic-gap');
+
+      // Non-positive disables it entirely.
+      process.env.TOPIC_GAP_HOURS = '0';
+      expect(formatMessages(getPendingMessages(), { lastTurnAt: now - 30 * 86_400_000, now })).not.toContain(
+        '<topic-gap',
+      );
+    } finally {
+      if (prev === undefined) delete process.env.TOPIC_GAP_HOURS;
+      else process.env.TOPIC_GAP_HOURS = prev;
+    }
+  });
+});
+
+describe('formatDuration', () => {
+  it('renders minutes, hours, and days', () => {
+    expect(formatDuration(35 * 60_000)).toBe('35m');
+    expect(formatDuration(2 * HOUR)).toBe('2h');
+    expect(formatDuration(4 * HOUR + 12 * 60_000)).toBe('4h 12m');
+    expect(formatDuration(3 * 86_400_000 + 2 * HOUR)).toBe('3d 2h');
+    expect(formatDuration(2 * 86_400_000)).toBe('2d');
   });
 });
