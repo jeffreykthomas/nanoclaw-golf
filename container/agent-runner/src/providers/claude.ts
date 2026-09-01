@@ -380,6 +380,9 @@ export class ClaudeProvider implements AgentProvider {
     this.effort = options.effort;
     this.env = {
       ...(options.env ?? {}),
+      // Default model for Task-tool subagents — orchestrator stays on
+      // `model`, workers spawn on this unless the agent overrides per spawn.
+      ...(options.subagentModel ? { CLAUDE_CODE_SUBAGENT_MODEL: options.subagentModel } : {}),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW:
         options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW ||
         process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW ||

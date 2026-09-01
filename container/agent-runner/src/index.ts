@@ -132,6 +132,7 @@ async function main(): Promise<void> {
     model: config.model,
     fallbackModel: config.fallbackModel,
     effort: config.effort,
+    subagentModel: config.subagentModel,
   });
 
   await runPollLoop({

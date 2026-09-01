@@ -8,6 +8,7 @@ const SCALAR_COLUMNS = new Set([
   'effort',
   'task_model',
   'chat_debounce_ms',
+  'subagent_model',
   'image_tag',
   'assistant_name',
   'max_messages_per_prompt',
@@ -30,11 +31,11 @@ export function createContainerConfig(config: ContainerConfigRow): void {
   getDb()
     .prepare(
       `INSERT INTO container_configs (
-        agent_group_id, provider, model, fallback_model, effort, task_model, chat_debounce_ms, image_tag, assistant_name,
+        agent_group_id, provider, model, fallback_model, effort, task_model, chat_debounce_ms, subagent_model, image_tag, assistant_name,
         max_messages_per_prompt, skills, mcp_servers, packages_apt, packages_npm,
         additional_mounts, updated_at
       ) VALUES (
-        @agent_group_id, @provider, @model, @fallback_model, @effort, @task_model, @chat_debounce_ms, @image_tag, @assistant_name,
+        @agent_group_id, @provider, @model, @fallback_model, @effort, @task_model, @chat_debounce_ms, @subagent_model, @image_tag, @assistant_name,
         @max_messages_per_prompt, @skills, @mcp_servers, @packages_apt, @packages_npm,
         @additional_mounts, @updated_at
       )`,
@@ -64,6 +65,7 @@ export function updateContainerConfigScalars(
       | 'effort'
       | 'task_model'
       | 'chat_debounce_ms'
+      | 'subagent_model'
       | 'image_tag'
       | 'assistant_name'
       | 'max_messages_per_prompt'

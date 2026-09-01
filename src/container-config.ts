@@ -46,6 +46,7 @@ export interface ContainerConfig {
   effort?: string;
   taskModel?: string;
   chatDebounceMs?: number;
+  subagentModel?: string;
 }
 
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
@@ -69,6 +70,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     effort: row.effort ?? undefined,
     taskModel: row.task_model ?? undefined,
     chatDebounceMs: row.chat_debounce_ms ?? undefined,
+    subagentModel: row.subagent_model ?? undefined,
   };
 }
 

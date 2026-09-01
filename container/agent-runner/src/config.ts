@@ -21,6 +21,7 @@ export interface RunnerConfig {
   effort?: string;
   taskModel?: string;
   chatDebounceMs?: number;
+  subagentModel?: string;
 }
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -53,6 +54,7 @@ export function loadConfig(): RunnerConfig {
     effort: (raw.effort as string) || undefined,
     taskModel: (raw.taskModel as string) || undefined,
     chatDebounceMs: typeof raw.chatDebounceMs === 'number' && raw.chatDebounceMs > 0 ? raw.chatDebounceMs : undefined,
+    subagentModel: (raw.subagentModel as string) || undefined,
   };
 
   return _config;

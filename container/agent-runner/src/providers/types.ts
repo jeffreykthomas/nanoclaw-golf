@@ -51,6 +51,13 @@ export interface ProviderOptions {
    */
   fallbackModel?: string;
   /**
+   * Default model for Task-tool subagents (exported as
+   * CLAUDE_CODE_SUBAGENT_MODEL). Lets a premium orchestrator delegate
+   * worker turns to a cheaper model; the agent can still override per
+   * spawn. Providers without subagents may ignore it.
+   */
+  subagentModel?: string;
+  /**
    * Reasoning effort (`'low' | 'medium' | 'high' | 'xhigh' | 'max'`). Passed
    * through to the underlying SDK. If omitted, the SDK default is used.
    */

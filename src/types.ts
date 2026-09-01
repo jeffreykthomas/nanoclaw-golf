@@ -19,6 +19,7 @@ export interface ContainerConfigRow {
   effort: string | null;
   task_model: string | null;
   chat_debounce_ms: number | null;
+  subagent_model: string | null;
   image_tag: string | null;
   assistant_name: string | null;
   max_messages_per_prompt: number | null;
