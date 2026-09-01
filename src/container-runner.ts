@@ -331,6 +331,14 @@ function buildMounts(
   // Agent group folder at /workspace/agent (RW for working files + CLAUDE.local.md)
   mounts.push({ hostPath: groupDir, containerPath: '/workspace/agent', readonly: false });
 
+  // Same folder again at /workspace/group — the v1-era path that still appears
+  // throughout long-lived agent memory, ledgers, and docs. Without this alias
+  // those writes silently land in a `group/` subdir of the session mount (an
+  // invisible shadow workspace; the mentors group accumulated 51MB there
+  // before it was noticed and merged back). Aliasing the mount makes every
+  // historical path resolve to the one real workspace.
+  mounts.push({ hostPath: groupDir, containerPath: '/workspace/group', readonly: false });
+
   // Per-group host IPC used by tools that must keep secrets on the host.
   mounts.push({ hostPath: groupIpcDir, containerPath: '/workspace/ipc', readonly: false });
 
