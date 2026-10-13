@@ -27,8 +27,21 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export type IntegrationAccess = 'read' | 'full';
+
+/**
+ * Per-group opt-in for Google integrations. Omitted = disabled.
+ * 'read' exposes lookup tools only (Gmail also allows drafts, never sends);
+ * 'full' exposes every tool the MCP server provides.
+ */
+export interface GroupIntegrations {
+  gmail?: IntegrationAccess;
+  calendar?: IntegrationAccess;
+}
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
+  integrations?: GroupIntegrations;
   timeout?: number; // Default: 300000 (5 minutes)
 }
 

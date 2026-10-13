@@ -24,6 +24,12 @@ import {
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import {
+  buildIntegrationMcpServers,
+  GroupIntegrations,
+  integrationAllowedTools,
+  integrationDisallowedTools,
+} from './integrations.js';
 
 interface ContainerInput {
   prompt: string;
@@ -38,6 +44,7 @@ interface ContainerInput {
   assistantName?: string;
   script?: string;
   secrets?: Record<string, string>;
+  integrations?: GroupIntegrations;
 }
 
 interface ContainerOutput {
@@ -593,7 +600,13 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  const allowedTools = getAllowedTools(capabilityProfile, useContextManagement);
+  const allowedTools = [
+    ...getAllowedTools(capabilityProfile, useContextManagement),
+    ...integrationAllowedTools(containerInput.integrations),
+  ];
+  const disallowedTools = integrationDisallowedTools(
+    containerInput.integrations,
+  );
 
   // SDK typings may lag new beta header strings; runtime still forwards them.
   const betas = useContextManagement ? [CONTEXT_MANAGEMENT_BETA] : undefined;
@@ -614,6 +627,7 @@ async function runQuery(
           }
         : undefined,
       allowedTools,
+      disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -629,6 +643,7 @@ async function runQuery(
             NANOCLAW_CAPABILITY_PROFILE: capabilityProfile,
           },
         },
+        ...buildIntegrationMcpServers(containerInput.integrations),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

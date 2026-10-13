@@ -26,8 +26,16 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { OneCLI } from '@onecli-sh/sdk';
+import {
+  buildIntegrationMounts,
+  resolveGroupIntegrations,
+} from './google-integrations.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup, SenderCapabilityProfile } from './types.js';
+import {
+  GroupIntegrations,
+  RegisteredGroup,
+  SenderCapabilityProfile,
+} from './types.js';
 
 const onecli = ONECLI_URL ? new OneCLI({ url: ONECLI_URL }) : null;
 
@@ -48,6 +56,7 @@ export interface ContainerInput {
   assistantName?: string;
   script?: string;
   secrets?: Record<string, string>;
+  integrations?: GroupIntegrations;
 }
 
 export interface ContainerOutput {
@@ -67,6 +76,7 @@ function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
   capabilityProfile: SenderCapabilityProfile,
+  integrations: GroupIntegrations,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -235,6 +245,9 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Google credentials, only for integrations this group opted into
+  mounts.push(...buildIntegrationMounts(integrations));
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -353,6 +366,10 @@ export async function runContainerAgent(
   const containerInput: ContainerInput = {
     ...input,
     secrets: input.secrets || readSecrets(),
+    integrations: resolveGroupIntegrations(
+      group,
+      input.capabilityProfile || 'owner-full',
+    ),
   };
   const redactedInput: ContainerInput = {
     ...containerInput,
@@ -366,10 +383,12 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
+  const capabilityProfile = containerInput.capabilityProfile || 'owner-full';
   const mounts = buildVolumeMounts(
     group,
     containerInput.isMain,
-    containerInput.capabilityProfile || 'owner-full',
+    capabilityProfile,
+    containerInput.integrations || {},
   );
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;

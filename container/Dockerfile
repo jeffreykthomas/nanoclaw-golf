@@ -37,6 +37,10 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Google MCP servers (enabled per group via containerConfig.integrations).
+# Pinned: read-only Gmail access relies on a denylist of this version's tools.
+RUN npm install -g @gongrzhe/server-gmail-autoauth-mcp@1.1.11 @cocal/google-calendar-mcp@2.7.0
+
 # Create app directory
 WORKDIR /app
 

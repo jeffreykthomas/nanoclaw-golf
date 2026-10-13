@@ -8,7 +8,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { STORE_DIR } from '../src/config.ts';
-import { initDatabase, setRegisteredGroup } from '../src/db.ts';
+import {
+  getRegisteredGroup,
+  initDatabase,
+  setRegisteredGroup,
+} from '../src/db.ts';
+import { parseIntegrationsFlag } from '../src/google-integrations.ts';
 import { isValidGroupFolder } from '../src/group-folder.ts';
 import { logger } from '../src/logger.ts';
 import { emitStatus } from './status.ts';
@@ -22,6 +27,7 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  integrations?: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -58,6 +64,9 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--is-main':
         result.isMain = true;
+        break;
+      case '--integrations':
+        result.integrations = args[++i] || '';
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
@@ -100,11 +109,31 @@ export async function run(args: string[]): Promise<void> {
   // Initialize database (creates schema + runs migrations)
   initDatabase();
 
+  // Re-registering must not wipe mounts/integrations set earlier.
+  let containerConfig = getRegisteredGroup(parsed.jid)?.containerConfig;
+  if (parsed.integrations !== undefined) {
+    try {
+      containerConfig = {
+        ...containerConfig,
+        integrations: parseIntegrationsFlag(parsed.integrations),
+      };
+    } catch (err) {
+      emitStatus('REGISTER_CHANNEL', {
+        STATUS: 'failed',
+        ERROR: 'invalid_integrations',
+        DETAIL: err instanceof Error ? err.message : String(err),
+        LOG: 'logs/setup.log',
+      });
+      process.exit(4);
+    }
+  }
+
   setRegisteredGroup(parsed.jid, {
     name: parsed.name,
     folder: parsed.folder,
     trigger: parsed.trigger,
     added_at: new Date().toISOString(),
+    containerConfig,
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });
