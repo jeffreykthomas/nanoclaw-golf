@@ -8,7 +8,7 @@
 # Override defaults with env vars, e.g. ZONE=us-central1-a MACHINE_TYPE=e2-standard-2
 set -euo pipefail
 
-PROJECT="${PROJECT:-mentors-more}"
+PROJECT="${PROJECT:-mentors-and-more}"
 VM_NAME="${VM_NAME:-mentors-claw}"
 ZONE="${ZONE:-us-west2-a}"
 MACHINE_TYPE="${MACHINE_TYPE:-e2-medium}"   # 4 GB RAM; bump to e2-standard-2 if container builds OOM
