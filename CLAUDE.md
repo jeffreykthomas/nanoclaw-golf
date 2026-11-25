@@ -243,17 +243,30 @@ Container typecheck is a separate tsconfig — if you edit `container/agent-runn
 
 Service management:
 
-> **personal-golf install note:** This install re-labels the launchd plist to `com.personal-golf.nanoclaw-main` (the upstream template ships `com.nanoclaw`). Skills under `.claude/skills/**`, `docs/SPEC.md`, and `launchd/com.nanoclaw.plist` still reference the upstream label — that's intentional, so `update-nanoclaw` keeps merging cleanly. When following any upstream skill, mentally substitute `com.nanoclaw` → `com.personal-golf.nanoclaw-main`. Canonical labels for this install live in [TOOLS.md](TOOLS.md) under "Local Service Runbook".
+> **personal-golf install note:** This install now runs on **Linux with systemd user units** (migrated from macOS/launchd on 2026-09-08). The live unit is `nanoclaw-golf.service`. Upstream files — skills under `.claude/skills/**`, `docs/SPEC.md`, `launchd/com.nanoclaw.plist` — still describe the launchd flow and the `com.nanoclaw` label; that's intentional, so `update-nanoclaw` keeps merging cleanly. When following any upstream skill, substitute `launchctl ... com.nanoclaw` → `systemctl --user ... nanoclaw-golf`, and `logs/*.log` → `journalctl --user -u nanoclaw-golf`. Canonical unit names, ports, and log commands for this install live in [TOOLS.md](TOOLS.md) under "Local Service Runbook" (reconciled 2026-09-16).
 
 ```bash
-# macOS (launchd) — see TOOLS.md "Local Service Runbook" for full label list
-launchctl load   ~/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist
-launchctl unload ~/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist
-npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main  # restart
+# THIS INSTALL (Linux, systemd user units). Unit is `nanoclaw-golf`, NOT `nanoclaw` —
+# `systemctl --user is-active nanoclaw` reports "inactive" for a service that is running fine.
+systemctl --user start|stop|restart nanoclaw-golf
+systemctl --user status nanoclaw-golf
+pnpm run build && systemctl --user restart nanoclaw-golf   # restart after a host code change
 
-# Linux (systemd)
-systemctl --user start|stop|restart nanoclaw
+# Sibling units on this machine: nanoclaw-headstart, nanoclaw-litellm
+
+# macOS (launchd) — upstream template only; no launchd agents exist on this machine
+npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main
 ```
+
+### Logging
+
+The host logger writes to stdout/stderr only — it never touches the filesystem. `logs/*.log`
+exists only when the supervisor redirects that output. The upstream launchd plist does this via
+`StandardOutPath`/`StandardErrorPath`; this install's systemd unit deliberately does not, so host
+output goes to the **journal** instead and `logs/` stays empty. Read it with
+`journalctl --user -u nanoclaw-golf`, which gives rotation and filtering for free.
+
+Any upstream skill or doc that says to `tail logs/nanoclaw.error.log` means the journal here.
 
 ## Troubleshooting
 
@@ -261,8 +274,8 @@ Check these first when something goes wrong:
 
 | What        | Where                                                                                                                                                                               |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Host logs   | `logs/nanoclaw.error.log` first (delivery failures, crash-loop backoff, warnings), then `logs/nanoclaw.log` for the full routing chain                                              |
-| Setup logs  | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step: bootstrap, environment, container, onecli, mounts, service, etc.)                                                   |
+| Host logs   | `journalctl --user -u nanoclaw-golf -n 200` (add `-f` to follow, `-p warning` for warnings/errors only). **Not** `logs/*.log` — see "Logging" above                              |
+| Setup logs  | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step). Written by the setup CLI itself, so these exist only if `/setup` has been run here — this install was migrated, so it has none |
 | Session DBs | `data/v2-sessions/<agent-group>/<session>/` — `inbound.db` (`messages_in`: did the message reach the container?), `outbound.db` (`messages_out`: did the agent produce a response?) |
 
 Note: container logs are lost after the container exits (`--rm` flag). If the agent silently failed inside the container, there's no persistent log to inspect.
@@ -322,8 +335,8 @@ grep -q '^INSTALL_CJK_FONTS=' .env && sed -i.bak 's/^INSTALL_CJK_FONTS=.*/INSTAL
 
 # Rebuild and restart so new sessions pick up the new image
 ./container/build.sh
-npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main   # macOS
-# systemctl --user restart nanoclaw                # Linux
+pnpm run build && systemctl --user restart nanoclaw-golf   # THIS INSTALL (Linux)
+# npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main   # macOS only
 ```
 
 `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.

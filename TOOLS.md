@@ -29,27 +29,57 @@ Keep practical coaching references here (non-secret).
 
 ## Local Service Runbook
 
-Three launch agents make up the local stack. Health-check them all with `script/check-coach-stack.sh`.
+**This install runs on Linux with systemd user units.** It was migrated from macOS/launchd on
+2026-09-08; the launchd plists and `/Users/jeffreythomas/...` paths this section used to list are
+gone. Verified 2026-09-16.
+
+Health-check everything: `systemctl --user list-units --type=service 'nanoclaw-*'`
+
+All three units log to the **journal**, not to `logs/*.log` — the units set no
+`StandardOutput=`/`StandardError=`, so `logs/` is empty by design. See CLAUDE.md "Logging".
 
 ### Main NanoClaw service
-- Plist: `~/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist`
-- Label: `com.personal-golf.nanoclaw-main`
-- Command: `/Users/jeffreythomas/.nvm/versions/node/v22.14.0/bin/node /Users/jeffreythomas/nanoclaw-golf/dist/index.js`
-- Logs: `logs/nanoclaw.log` and `logs/nanoclaw.error.log`
-- Restart: `npm run build && launchctl kickstart -k gui/$(id -u)/com.personal-golf.nanoclaw-main`
+- Unit: `nanoclaw-golf.service` (`~/.config/systemd/user/nanoclaw-golf.service`)
+- Command: `/home/jthomas/.nvm/versions/node/v22.23.2/bin/node /home/jthomas/nanoclaw-golf/dist/index.js`
+- Logs: `journalctl --user -u nanoclaw-golf -f`
+- Restart: `pnpm run build && systemctl --user restart nanoclaw-golf`
+- Note: the unit name is `nanoclaw-golf`, **not** `nanoclaw`. `systemctl --user is-active nanoclaw`
+  returns "inactive" for a service that is running fine.
 
-### Coach API (Rails app + sibling bridge)
-- Plist: `~/Library/LaunchAgents/com.personal-golf.coach-api.plist`
-- Label: `com.personal-golf.coach-api`
-- Command: `npm run dev:app` (port `4317`, `ENABLE_COACH_AGENT=true`)
-- Logs: `~/Library/Logs/personal-golf-coach-api.{out,err}.log`
-- Restart: `launchctl kickstart -k gui/$(id -u)/com.personal-golf.coach-api`
-- Health: `curl http://127.0.0.1:4317/health`
+### Coach API — DEPRECATED, not in use
+- Not part of the working stack. Do not treat a failure here as an incident, and do not
+  health-check it as part of the runbook.
+- It is nonetheless still *running*: the `nanoclaw-golf` unit sets
+  `Environment=ENABLE_COACH_AGENT=true` and `Environment=APP_PORT=4317` (these override `.env`),
+  so the endpoint answers in-process and `curl http://127.0.0.1:4317/health` returns 200.
+- Cleanup, whenever convenient: drop those two `Environment=` lines from
+  `~/.config/systemd/user/nanoclaw-golf.service`, then
+  `systemctl --user daemon-reload && systemctl --user restart nanoclaw-golf`.
+  Left in place for now — retiring it is a separate decision from documenting it.
+- **Safe to remove.** Verified 2026-09-16: `ENABLE_COACH_AGENT` gates only
+  `startAppBridgeRuntime()` (`src/index.ts:190`), the HTTP server on 4317. The coach *agent
+  groups* (`agent-coach-2`, the `coach-*` group folders, the coach-portal MCP wiring) are gated
+  separately by agent-group id and folder name in `src/container-runner.ts`, not by this flag.
+  Turning the flag off stops the deprecated bridge and leaves the coach agents working.
+- Likely bonus: the app server registers an `onShutdown` callback that calls `appServer.close()`.
+  Node's `close()` waits for keep-alive connections to drain and is a classic hang source, and
+  this unit's stop currently times out and gets SIGKILLed
+  (`nanoclaw-golf.service: State 'final-sigterm' timed out. Killing.`). Unconfirmed, but removing
+  the flag is the cheapest way to test it.
 
-### Cloudflare tunnel
-- Plist: `~/Library/LaunchAgents/com.personal-golf.coach-tunnel.plist`
-- Label: `com.personal-golf.coach-tunnel`
-- Command: `cloudflared tunnel --config ~/.cloudflared/config.yml run personal-golf-coach`
-- Logs: `~/Library/Logs/personal-golf-coach-tunnel.{out,err}.log`
-- Restart: `launchctl kickstart -k gui/$(id -u)/com.personal-golf.coach-tunnel`
-- Health: `curl https://coach-bridge.golf-tip.org/health`
+### Sibling units
+- `nanoclaw-headstart.service` — NanoClaw Headstart Host, a separate install at
+  `~/clients/headstart/nanoclaw-headstart` (runs from source via tsx, not this repo).
+- `nanoclaw-litellm.service` — LiteLLM Hugging Face fallback proxy; runs the
+  `ghcr.io/berriai/litellm` container on `127.0.0.1:4000`, config at
+  `~/.config/nanoclaw/litellm-config.yaml`.
+
+### Cloudflare tunnel — gone, and expected to be
+- `cloudflared` is not running, has no systemd unit, and the old launchd agent
+  `com.personal-golf.coach-tunnel` no longer exists.
+- `curl https://coach-bridge.golf-tip.org/health` returns 530 (Cloudflare: origin unreachable).
+- **This is fine.** The tunnel existed to front the Coach API, which is deprecated. Nothing in the
+  working stack depends on it, so the 530 is not an incident.
+
+### Known-stale reference
+`script/check-coach-stack.sh` is referenced by older notes but **does not exist** in this repo.
