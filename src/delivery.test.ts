@@ -272,6 +272,74 @@ describe('deliverSessionMessages — permission check', () => {
   });
 });
 
+describe('deliverSessionMessages — missing routing fields', () => {
+  // A reply produced on a scheduled-task turn has no channel_type/platform_id:
+  // the task wake isn't a chat message, so there is nothing to reply *to*.
+  function insertUnroutedOutbound(agentGroupId: string, sessionId: string, msgId: string): void {
+    const db = new Database(outboundDbPath(agentGroupId, sessionId));
+    db.prepare(
+      `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, thread_id, content)
+       VALUES (?, datetime('now'), 'chat', NULL, NULL, 'stale-thread', ?)`,
+    ).run(msgId, JSON.stringify({ text: 'scheduled reply' }));
+    db.close();
+  }
+
+  it("falls back to the session's origin chat and drops the stale thread id", async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertUnroutedOutbound('ag-1', session.id, 'out-unrouted');
+
+    const calls: Array<{ channelType: string; platformId: string; threadId: string | null }> = [];
+    setDeliveryAdapter({
+      async deliver(channelType, platformId, threadId) {
+        calls.push({ channelType, platformId, threadId });
+        return 'plat-msg-id';
+      },
+    });
+
+    await deliverSessionMessages(session);
+
+    expect(calls).toEqual([{ channelType: 'telegram', platformId: 'telegram:123', threadId: null }]);
+
+    const inDb = openInboundDb('ag-1', session.id);
+    const row = inDb.prepare("SELECT status FROM delivered WHERE message_out_id = 'out-unrouted'").get() as {
+      status: string;
+    };
+    inDb.close();
+    expect(row.status).toBe('delivered');
+  });
+
+  it('marks the message failed, not delivered, when no origin chat can be resolved', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertUnroutedOutbound('ag-1', session.id, 'out-orphan');
+    // Same session DBs, but with no origin chat to fall back to.
+    const orphan = { ...session, messaging_group_id: null };
+
+    let callCount = 0;
+    setDeliveryAdapter({
+      async deliver() {
+        callCount++;
+        return 'plat-msg-id';
+      },
+    });
+
+    // MAX_DELIVERY_ATTEMPTS (3) tries, then permanently failed.
+    await deliverSessionMessages(orphan);
+    await deliverSessionMessages(orphan);
+    await deliverSessionMessages(orphan);
+
+    expect(callCount).toBe(0);
+
+    const inDb = openInboundDb('ag-1', session.id);
+    const row = inDb.prepare("SELECT status FROM delivered WHERE message_out_id = 'out-orphan'").get() as {
+      status: string;
+    };
+    inDb.close();
+    expect(row.status).toBe('failed');
+  });
+});
+
 describe('handleDeferMessages — usage-limit requeue', () => {
   it('requeues claimed rows with a future process_after without bumping tries', async () => {
     seedAgentAndChannel();
@@ -287,7 +355,7 @@ describe('handleDeferMessages — usage-limit requeue', () => {
       priority: 0,
       created_at: now(),
     });
-    const { session } = resolveSession('ag-1', 'mg-1', null);
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
     const inDb = openInboundDb(session.agent_group_id, session.id);
     inDb
       .prepare(
@@ -339,7 +407,7 @@ describe('handleDeferMessages — usage-limit requeue', () => {
       priority: 0,
       created_at: now(),
     });
-    const { session } = resolveSession('ag-1', 'mg-1', null);
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
     const inDb = openInboundDb(session.agent_group_id, session.id);
     inDb
       .prepare(

@@ -12,7 +12,7 @@ import type Database from 'better-sqlite3';
 import { getRunningSessions, getActiveSessions, createPendingQuestion } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
-import { getMessagingGroupByPlatform } from './db/messaging-groups.js';
+import { getMessagingGroup, getMessagingGroupByPlatform } from './db/messaging-groups.js';
 import {
   getDueOutboundMessages,
   getDeliveredIds,
@@ -344,10 +344,40 @@ async function deliverMessage(
     }
   }
 
-  // Channel delivery
-  if (!msg.channel_type || !msg.platform_id) {
-    log.warn('Message missing routing fields', { id: msg.id });
-    return;
+  // Channel delivery.
+  //
+  // A reply produced on a scheduled-task turn carries no routing fields — the
+  // task wake isn't a chat message, so there's nothing for the agent to reply
+  // *to*. Historically this hit a silent `return`, and the caller read that
+  // normal return as success and marked the message delivered, so the reply
+  // was written, recorded as delivered, and never sent. Same class of bug the
+  // permission check above throws to avoid.
+  //
+  // Fall back to the session's origin chat: the chat this session was spawned
+  // from is always a legitimate destination for it (see the isOriginChat case
+  // in the permission check). If even that can't be resolved, throw — an
+  // undeliverable message must surface as failed, never as delivered.
+  let channelType = msg.channel_type;
+  let platformId = msg.platform_id;
+  let threadId = msg.thread_id;
+  if (!channelType || !platformId) {
+    const origin = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+    if (!origin) {
+      throw new Error(
+        `message ${msg.id} has no routing fields and no resolvable origin chat for session ${session.id}`,
+      );
+    }
+    channelType = origin.channel_type;
+    platformId = origin.platform_id;
+    // The origin chat is a different conversation from whatever thread the
+    // agent thought it was in — don't carry a stale thread id into it.
+    threadId = null;
+    log.warn('Message missing routing fields — falling back to origin chat', {
+      id: msg.id,
+      sessionId: session.id,
+      channelType,
+      platformId,
+    });
   }
 
   // Read file attachments from outbox if the content declares files.
@@ -358,18 +388,11 @@ async function deliverMessage(
       ? readOutboxFiles(session.agent_group_id, session.id, msg.id, content.files as string[])
       : undefined;
 
-  const platformMsgId = await deliveryAdapter.deliver(
-    msg.channel_type,
-    msg.platform_id,
-    msg.thread_id,
-    msg.kind,
-    msg.content,
-    files,
-  );
+  const platformMsgId = await deliveryAdapter.deliver(channelType, platformId, threadId, msg.kind, msg.content, files);
   log.info('Message delivered', {
     id: msg.id,
-    channelType: msg.channel_type,
-    platformId: msg.platform_id,
+    channelType,
+    platformId,
     platformMsgId,
     fileCount: files?.length,
   });
