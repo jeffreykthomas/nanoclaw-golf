@@ -74,6 +74,7 @@ const MENTORS_OPERATIONAL_ENV_VARS = [
   'GA4_PROPERTY_ID',
   'ELEVENLABS_API_KEY',
   'OPENAI_API_KEY',
+  'OPENAI_IMAGE_MODEL',
 ];
 // Mentors is a long-lived hub session. These apply only to this group;
 // host env can still override. Compact used to fire at 80k for Fable
