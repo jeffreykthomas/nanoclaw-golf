@@ -13,6 +13,7 @@ import {
   sendTelegramPayload,
   telegramFileDownloadTarget,
 } from './telegram.js';
+import { TELEGRAM_BOT_API_DATA } from '../config.js';
 import { log } from '../log.js';
 
 describe('telegram routing', () => {
@@ -165,8 +166,14 @@ describe('telegram Bot API root', () => {
       telegramFileDownloadTarget('http://127.0.0.1:8081', 'TOKEN', '/var/lib/telegram-bot-api/videos/clip.mp4'),
     ).toEqual({
       kind: 'local',
-      path: path.join(process.cwd(), 'data/telegram-bot-api/videos/clip.mp4'),
+      path: path.join(TELEGRAM_BOT_API_DATA, 'videos/clip.mp4'),
     });
+  });
+
+  it('remaps container paths onto a custom host data dir', () => {
+    expect(remapTelegramBotApiPath('/var/lib/telegram-bot-api/TOKEN/photos/file_8.jpg', '/srv/tg-data')).toBe(
+      '/srv/tg-data/TOKEN/photos/file_8.jpg',
+    );
   });
 
   it('leaves non-container absolute paths unchanged', () => {

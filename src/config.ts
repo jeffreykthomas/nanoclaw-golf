@@ -40,6 +40,7 @@ const coachEnvConfig = readEnvFile([
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_MIRROR_CHAT_ID',
   'TELEGRAM_API_ROOT',
+  'TELEGRAM_BOT_API_DATA',
 ]);
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -196,6 +197,13 @@ export const TELEGRAM_API_ROOT =
   (process.env.TELEGRAM_API_ROOT || coachEnvConfig.TELEGRAM_API_ROOT || 'https://api.telegram.org')
     .trim()
     .replace(/\/$/, '') || 'https://api.telegram.org';
+// Host dir bind-mounted at /var/lib/telegram-bot-api in the local Bot API
+// container. Must match the -v source in scripts/run-telegram-bot-api.sh, or
+// --local file paths resolve to a dir the server isn't writing to.
+export const TELEGRAM_BOT_API_DATA = path.resolve(
+  PROJECT_ROOT,
+  process.env.TELEGRAM_BOT_API_DATA || coachEnvConfig.TELEGRAM_BOT_API_DATA || 'data/telegram-bot-api',
+);
 
 export const AUTO_CHECKINS_ENABLED =
   (process.env.AUTO_CHECKINS_ENABLED || coachEnvConfig.AUTO_CHECKINS_ENABLED || 'false') === 'true';

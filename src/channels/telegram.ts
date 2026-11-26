@@ -6,7 +6,7 @@ import { pipeline } from 'stream/promises';
 
 import { Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, TELEGRAM_API_ROOT, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, TELEGRAM_API_ROOT, TELEGRAM_BOT_API_DATA, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
@@ -146,10 +146,7 @@ export function telegramFileDownloadTarget(
  * `--local` Bot API returns container paths under `/var/lib/telegram-bot-api`.
  * NanoClaw runs on the host, so map that onto the bind-mounted data dir.
  */
-export function remapTelegramBotApiPath(
-  filePath: string,
-  hostDataDir = process.env.TELEGRAM_BOT_API_DATA || path.join(process.cwd(), 'data/telegram-bot-api'),
-): string {
+export function remapTelegramBotApiPath(filePath: string, hostDataDir = TELEGRAM_BOT_API_DATA): string {
   if (filePath === CONTAINER_BOT_API_DATA_DIR || filePath.startsWith(`${CONTAINER_BOT_API_DATA_DIR}/`)) {
     return path.join(hostDataDir, filePath.slice(CONTAINER_BOT_API_DATA_DIR.length));
   }

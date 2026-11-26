@@ -4,7 +4,9 @@
 # cloud 20MB getFile cap (and upload above 50MB), up to ~2GB.
 #
 # Requires TELEGRAM_API_ID and TELEGRAM_API_HASH from https://my.telegram.org
-# (API development tools). Optional: TELEGRAM_BOT_API_PORT (default 8081).
+# (API development tools). Optional: TELEGRAM_BOT_API_PORT (default 8081),
+# TELEGRAM_BOT_API_DATA (host data dir, default data/telegram-bot-api; also read
+# by the host to resolve --local file paths, so set it in .env, not just here).
 #
 # Usage:
 #   bash scripts/run-telegram-bot-api.sh          # start/replace the server
@@ -23,7 +25,6 @@ ENV_FILE="$PROJECT_ROOT/.env"
 IMAGE="${TELEGRAM_BOT_API_IMAGE:-aiogram/telegram-bot-api:latest}"
 NAME="${TELEGRAM_BOT_API_CONTAINER:-telegram-bot-api}"
 PORT="${TELEGRAM_BOT_API_PORT:-8081}"
-DATA_DIR="${TELEGRAM_BOT_API_DATA:-$PROJECT_ROOT/data/telegram-bot-api}"
 PLIST="${HOME}/Library/LaunchAgents/com.personal-golf.nanoclaw-main.plist"
 LABEL="gui/$(id -u)/com.personal-golf.nanoclaw-main"
 
@@ -44,6 +45,12 @@ read_env() {
   value="${value#\'}"
   printf '%s' "$value"
 }
+
+# Same lookup as the host (src/config.ts TELEGRAM_BOT_API_DATA): env, then
+# .env, then the default. Relative paths resolve against the project root.
+DATA_DIR="$(read_env TELEGRAM_BOT_API_DATA)"
+DATA_DIR="${DATA_DIR:-data/telegram-bot-api}"
+[[ "$DATA_DIR" = /* ]] || DATA_DIR="$PROJECT_ROOT/$DATA_DIR"
 
 ensure_credentials() {
   API_ID="$(read_env TELEGRAM_API_ID)"
